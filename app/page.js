@@ -15,11 +15,11 @@ export default function Home() {
   }, [messages]);
 
   const formatMessage = (text) => {
+    if (!text) return '';
     return text
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\n/g, '<br/>');
   };
-
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
     const userMessage = { role: 'user', content: input };
