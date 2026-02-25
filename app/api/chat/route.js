@@ -84,10 +84,12 @@ RULES:
 - Add this to every first message: "📋 By chatting with us, you agree that your information may be used to contact you about our services, in accordance with POPIA."`,
     });
 
-    const history = messages.slice(0, -1).filter((msg, index) => {
+  const history = messages.slice(0, -1).filter((msg, index) => {
       if (index === 0 && msg.role === "assistant") return false;
+      if (!msg.content || msg.content.trim() === "") return false;
       return true;
     }).map((msg) => ({
+ ({
       role: msg.role === "assistant" ? "model" : "user",
       parts: [{ text: msg.content }],
     }));
