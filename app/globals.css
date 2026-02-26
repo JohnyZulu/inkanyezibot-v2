@@ -7,3 +7,13 @@
 body {
   font-family: sans-serif;
 }
+
+html {
+  height: -webkit-fill-available;
+}
+
+@media (max-width: 768px) {
+  body {
+    height: -webkit-fill-available;
+  }
+}

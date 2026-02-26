@@ -72,11 +72,11 @@ export default function EmbedPage() {
 
   return (
     <div style={{
-      width: '100%', height: '100vh',
-      background: 'linear-gradient(180deg, #020818 0%, #0B1120 40%, #0f0a1e 100%)',
-      display: 'flex', flexDirection: 'column',
-      fontFamily: 'sans-serif', position: 'relative', overflow: 'hidden'
-    }}>
+      width: '100%', height: '100dvh',
+minHeight: '-webkit-fill-available',
+background: 'linear-gradient(180deg, #020818 0%, #0B1120 40%, #0f0a1e 100%)',
+display: 'flex', flexDirection: 'column',
+fontFamily: 'sans-serif', position: 'relative', overflow: 'hidden'    }}>
 
       {/* Animated CSS */}
       <style>{`
