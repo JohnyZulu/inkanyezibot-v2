@@ -19,15 +19,13 @@ export default function EmbedPage() {
       x: Math.random() * 100,
       y: Math.random() * 100,
       size: Math.random() * 2 + 0.5,
-      opacity: Math.random() * 0.7 + 0.3,
       duration: Math.random() * 3 + 2,
     }));
     setStars(generatedStars);
-
     const timer = setTimeout(() => {
       setDoorsOpen(true);
-      setTimeout(() => setDoorsAnimating(false), 900);
-    }, 300);
+      setTimeout(() => setDoorsAnimating(false), 1400);
+    }, 400);
     return () => clearTimeout(timer);
   }, []);
 
@@ -43,9 +41,7 @@ export default function EmbedPage() {
 
   const formatMessage = (text) => {
     if (!text) return '';
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n/g, '<br/>');
+    return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
   };
 
   const sendMessage = async () => {
@@ -69,6 +65,153 @@ export default function EmbedPage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const DoorPanel = ({ side }) => {
+    const isLeft = side === 'left';
+    return (
+      <div
+        className={doorsOpen ? (isLeft ? 'door-left' : 'door-right') : ''}
+        style={{
+          width: '50%', height: '100%', position: 'relative', overflow: 'hidden',
+          background: isLeft
+            ? 'linear-gradient(160deg, #0a1628 0%, #0d1f3c 40%, #071020 100%)'
+            : 'linear-gradient(200deg, #0a1628 0%, #0d1f3c 40%, #071020 100%)',
+          borderRight: isLeft ? '3px solid rgba(249,115,22,0.9)' : 'none',
+          borderLeft: !isLeft ? '3px solid rgba(249,115,22,0.9)' : 'none',
+        }}
+      >
+        {/* Top indicator light */}
+        <div style={{
+          position: 'absolute', top: '8px',
+          left: isLeft ? '50%' : '50%',
+          transform: 'translateX(-50%)',
+          width: '0', height: '0',
+          borderLeft: '10px solid transparent',
+          borderRight: '10px solid transparent',
+          borderBottom: '14px solid rgba(249,115,22,0.9)',
+          filter: 'drop-shadow(0 0 6px rgba(249,115,22,1))'
+        }} />
+
+        {/* Outer frame border */}
+        <div style={{
+          position: 'absolute',
+          top: '28px', bottom: '28px',
+          left: isLeft ? '8px' : '4px',
+          right: isLeft ? '4px' : '8px',
+          border: '2px solid rgba(249,115,22,0.25)',
+          borderRadius: '2px'
+        }} />
+
+        {/* Inner frame */}
+        <div style={{
+          position: 'absolute',
+          top: '44px', bottom: '44px',
+          left: isLeft ? '20px' : '10px',
+          right: isLeft ? '10px' : '20px',
+          border: '1px solid rgba(249,115,22,0.15)',
+          borderRadius: '2px'
+        }} />
+
+        {/* Main angled panel shape */}
+        <div style={{
+          position: 'absolute',
+          top: '60px', bottom: '60px',
+          left: isLeft ? '24px' : '8px',
+          right: isLeft ? '8px' : '24px',
+          background: 'linear-gradient(180deg, rgba(249,115,22,0.04) 0%, rgba(249,115,22,0.08) 50%, rgba(249,115,22,0.04) 100%)',
+          border: '1px solid rgba(249,115,22,0.2)',
+          clipPath: isLeft
+            ? 'polygon(0% 8%, 100% 0%, 100% 100%, 0% 92%)'
+            : 'polygon(0% 0%, 100% 8%, 100% 92%, 0% 100%)',
+        }} />
+
+        {/* Energy strips - like the blue strips in the reference */}
+        {[28, 42, 58, 72].map((pct, i) => (
+          <div key={i} style={{
+            position: 'absolute',
+            top: `${pct}%`,
+            left: isLeft ? '28px' : '12px',
+            right: isLeft ? '12px' : '28px',
+            height: '4px',
+            background: `linear-gradient(90deg, transparent, rgba(249,115,22,${0.4 + i * 0.1}), rgba(249,115,22,${0.7 + i * 0.1}), rgba(249,115,22,${0.4 + i * 0.1}), transparent)`,
+            borderRadius: '2px',
+            boxShadow: `0 0 8px rgba(249,115,22,0.6), 0 0 16px rgba(249,115,22,0.3)`,
+            animation: `energyPulse ${1.2 + i * 0.4}s ease-in-out infinite`
+          }} />
+        ))}
+
+        {/* Horizontal panel dividers */}
+        <div style={{ position: 'absolute', top: '22%', left: isLeft ? '20px' : '8px', right: isLeft ? '8px' : '20px', height: '1px', background: 'rgba(249,115,22,0.2)' }} />
+        <div style={{ position: 'absolute', top: '50%', left: isLeft ? '16px' : '6px', right: isLeft ? '6px' : '16px', height: '2px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.5), transparent)' }} />
+        <div style={{ position: 'absolute', top: '78%', left: isLeft ? '20px' : '8px', right: isLeft ? '8px' : '20px', height: '1px', background: 'rgba(249,115,22,0.2)' }} />
+
+        {/* Vertical structural ridge */}
+        <div style={{
+          position: 'absolute',
+          [isLeft ? 'left' : 'right']: '35%',
+          top: '30px', bottom: '30px',
+          width: '3px',
+          background: 'linear-gradient(180deg, transparent, rgba(249,115,22,0.4), rgba(249,115,22,0.6), rgba(249,115,22,0.4), transparent)',
+          boxShadow: '0 0 6px rgba(249,115,22,0.4)'
+        }} />
+
+        {/* Rivets / bolts */}
+        {[20, 38, 56, 74, 88].map((pct, i) => (
+          <div key={i} style={{
+            position: 'absolute',
+            top: `${pct}%`,
+            [isLeft ? 'left' : 'right']: '10px',
+            width: '8px', height: '8px',
+            borderRadius: '50%',
+            background: 'radial-gradient(circle at 35% 35%, #ff9a3c, #f97316, #7c2d12)',
+            border: '1px solid rgba(249,115,22,0.5)',
+            boxShadow: '0 0 6px rgba(249,115,22,0.8), inset 0 0 4px rgba(0,0,0,0.5)',
+            animation: `boltFlicker ${0.8 + i * 0.35}s ease-in-out infinite`
+          }} />
+        ))}
+
+        {/* Corner accent marks */}
+        <div style={{ position: 'absolute', top: '30px', [isLeft ? 'right' : 'left']: '10px', width: '16px', height: '16px', borderTop: '2px solid rgba(249,115,22,0.6)', [isLeft ? 'borderRight' : 'borderLeft']: '2px solid rgba(249,115,22,0.6)' }} />
+        <div style={{ position: 'absolute', bottom: '30px', [isLeft ? 'right' : 'left']: '10px', width: '16px', height: '16px', borderBottom: '2px solid rgba(249,115,22,0.6)', [isLeft ? 'borderRight' : 'borderLeft']: '2px solid rgba(249,115,22,0.6)' }} />
+
+        {/* Scan line sweep */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0, height: '3px',
+          background: 'linear-gradient(90deg, transparent, rgba(249,115,22,1), white, rgba(249,115,22,1), transparent)',
+          animation: 'scanLine 0.8s ease forwards',
+          boxShadow: '0 0 10px rgba(249,115,22,0.8)'
+        }} />
+
+        {/* Inner edge glow */}
+        <div style={{
+          position: 'absolute',
+          [isLeft ? 'right' : 'left']: 0,
+          top: 0, bottom: 0, width: '40px',
+          background: isLeft
+            ? 'linear-gradient(90deg, transparent, rgba(249,115,22,0.25))'
+            : 'linear-gradient(270deg, transparent, rgba(249,115,22,0.25))'
+        }} />
+
+        {/* Engine glow bottom */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '12px',
+          background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.8), transparent)',
+          animation: 'enginePulse 0.6s ease-in-out infinite',
+          boxShadow: '0 -4px 12px rgba(249,115,22,0.4)'
+        }} />
+
+        {/* Center star logo */}
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%',
+          transform: 'translate(-50%, -60%)',
+          fontSize: '24px',
+          filter: 'drop-shadow(0 0 12px rgba(249,115,22,1))',
+          opacity: doorsOpen ? 0 : 1,
+          transition: 'opacity 0.2s ease'
+        }}>⭐</div>
+      </div>
+    );
   };
 
   return (
@@ -109,35 +252,43 @@ export default function EmbedPage() {
           to { transform: rotate(360deg) translateX(12px) rotate(-360deg); }
         }
         @keyframes doorLeft {
-          from { transform: translateX(0); }
-          to { transform: translateX(-100%); }
+          0% { transform: translateX(0); }
+          60% { transform: translateX(-88%); }
+          80% { transform: translateX(-95%); }
+          100% { transform: translateX(-100%); }
         }
         @keyframes doorRight {
-          from { transform: translateX(0); }
-          to { transform: translateX(100%); }
+          0% { transform: translateX(0); }
+          60% { transform: translateX(88%); }
+          80% { transform: translateX(95%); }
+          100% { transform: translateX(100%); }
         }
         @keyframes revealContent {
           from { opacity: 0; transform: scale(0.97); }
           to { opacity: 1; transform: scale(1); }
         }
         @keyframes scanLine {
-          0% { top: 0%; opacity: 1; }
+          0% { top: -4px; opacity: 1; }
           100% { top: 100%; opacity: 0; }
         }
         @keyframes enginePulse {
-          0%, 100% { opacity: 0.4; }
+          0%, 100% { opacity: 0.5; }
           50% { opacity: 1; }
         }
+        @keyframes energyPulse {
+          0%, 100% { opacity: 0.5; transform: scaleX(0.95); }
+          50% { opacity: 1; transform: scaleX(1); }
+        }
         @keyframes boltFlicker {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.3; }
+          0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(249,115,22,0.8); }
+          50% { opacity: 0.4; box-shadow: 0 0 2px rgba(249,115,22,0.3); }
         }
         .message-bubble { animation: fadeInUp 0.3s ease forwards; }
         .star-pulse { animation: twinkle var(--duration, 2s) ease-in-out infinite; }
         .cosmic-border { animation: pulseGlow 3s ease-in-out infinite; }
-        .door-left { animation: doorLeft 0.85s cubic-bezier(0.4,0,0.2,1) forwards; }
-        .door-right { animation: doorRight 0.85s cubic-bezier(0.4,0,0.2,1) forwards; }
-        .content-reveal { animation: revealContent 0.5s ease 0.6s both; }
+        .door-left { animation: doorLeft 1.1s cubic-bezier(0.25, 0.1, 0.25, 1) forwards; }
+        .door-right { animation: doorRight 1.1s cubic-bezier(0.25, 0.1, 0.25, 1) forwards; }
+        .content-reveal { animation: revealContent 0.5s ease 0.9s both; }
         textarea:focus { border-color: rgba(249,115,22,0.6) !important; box-shadow: 0 0 12px rgba(249,115,22,0.3); }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -152,63 +303,8 @@ export default function EmbedPage() {
           zIndex: 100, display: 'flex',
           pointerEvents: doorsOpen ? 'none' : 'all'
         }}>
-          {/* Left Door */}
-          <div className={doorsOpen ? 'door-left' : ''} style={{
-            width: '50%', height: '100%',
-            background: 'linear-gradient(135deg, #010610 0%, #0B1120 100%)',
-            borderRight: '2px solid rgba(249,115,22,0.6)',
-            position: 'relative', overflow: 'hidden',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>
-            <div style={{ position: 'absolute', top: '8%', left: '10%', right: '5%', height: '1px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.5), transparent)' }} />
-            <div style={{ position: 'absolute', top: '20%', left: '15%', right: '10%', height: '1px', background: 'rgba(249,115,22,0.15)' }} />
-            <div style={{ position: 'absolute', top: '50%', left: '10%', right: '5%', height: '2px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.4), transparent)' }} />
-            <div style={{ position: 'absolute', top: '80%', left: '15%', right: '10%', height: '1px', background: 'rgba(249,115,22,0.15)' }} />
-            <div style={{ position: 'absolute', top: '92%', left: '10%', right: '5%', height: '1px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.5), transparent)' }} />
-            <div style={{ position: 'absolute', left: '30%', top: '5%', bottom: '5%', width: '2px', background: 'linear-gradient(180deg, transparent, rgba(249,115,22,0.3), transparent)' }} />
-            {[15, 35, 55, 75, 90].map((pct, i) => (
-              <div key={i} style={{
-                position: 'absolute', top: `${pct}%`, left: '12%',
-                width: '6px', height: '6px', borderRadius: '50%',
-                background: 'radial-gradient(circle, #f97316, #7c3100)',
-                boxShadow: '0 0 4px rgba(249,115,22,0.8)',
-                animation: `boltFlicker ${1 + i * 0.3}s ease-in-out infinite`
-              }} />
-            ))}
-            <div style={{ position: 'absolute', left: 0, right: 0, height: '3px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.9), transparent)', animation: 'scanLine 0.6s ease forwards' }} />
-            <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '30px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.2))' }} />
-            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '8px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.6), transparent)', animation: 'enginePulse 0.5s ease-in-out infinite' }} />
-            <div style={{ fontSize: '28px', filter: 'drop-shadow(0 0 10px rgba(249,115,22,0.8))', opacity: doorsOpen ? 0 : 1, transition: 'opacity 0.2s' }}>⭐</div>
-          </div>
-
-          {/* Right Door */}
-          <div className={doorsOpen ? 'door-right' : ''} style={{
-            width: '50%', height: '100%',
-            background: 'linear-gradient(225deg, #010610 0%, #0B1120 100%)',
-            borderLeft: '2px solid rgba(249,115,22,0.6)',
-            position: 'relative', overflow: 'hidden',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>
-            <div style={{ position: 'absolute', top: '8%', left: '5%', right: '10%', height: '1px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.5), transparent)' }} />
-            <div style={{ position: 'absolute', top: '20%', left: '10%', right: '15%', height: '1px', background: 'rgba(249,115,22,0.15)' }} />
-            <div style={{ position: 'absolute', top: '50%', left: '5%', right: '10%', height: '2px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.4), transparent)' }} />
-            <div style={{ position: 'absolute', top: '80%', left: '10%', right: '15%', height: '1px', background: 'rgba(249,115,22,0.15)' }} />
-            <div style={{ position: 'absolute', top: '92%', left: '5%', right: '10%', height: '1px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.5), transparent)' }} />
-            <div style={{ position: 'absolute', right: '30%', top: '5%', bottom: '5%', width: '2px', background: 'linear-gradient(180deg, transparent, rgba(249,115,22,0.3), transparent)' }} />
-            {[10, 30, 50, 70, 88].map((pct, i) => (
-              <div key={i} style={{
-                position: 'absolute', top: `${pct}%`, right: '12%',
-                width: '6px', height: '6px', borderRadius: '50%',
-                background: 'radial-gradient(circle, #f97316, #7c3100)',
-                boxShadow: '0 0 4px rgba(249,115,22,0.8)',
-                animation: `boltFlicker ${1.2 + i * 0.3}s ease-in-out infinite`
-              }} />
-            ))}
-            <div style={{ position: 'absolute', left: 0, right: 0, height: '3px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.9), transparent)', animation: 'scanLine 0.6s ease forwards' }} />
-            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '30px', background: 'linear-gradient(270deg, transparent, rgba(249,115,22,0.2))' }} />
-            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '8px', background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.6), transparent)', animation: 'enginePulse 0.5s ease-in-out infinite' }} />
-            <div style={{ fontSize: '28px', filter: 'drop-shadow(0 0 10px rgba(249,115,22,0.8))', opacity: doorsOpen ? 0 : 1, transition: 'opacity 0.2s' }}>⭐</div>
-          </div>
+          <DoorPanel side="left" />
+          <DoorPanel side="right" />
         </div>
       )}
 
