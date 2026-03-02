@@ -43,7 +43,7 @@ export async function POST(request) {
     const { messages } = await request.json();
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.0-flash",
       systemInstruction: `You are InkanyeziBot, an expert AI sales assistant for Inkanyezi Technologies, an AI automation company based in Durban, South Africa.
 
 YOUR GOAL: Have a natural, consultative conversation to understand the prospect's business challenges and show them how Inkanyezi Technologies can solve them.
@@ -97,8 +97,25 @@ RULES:
     }
 
     return Response.json({ message: text });
-  } catch (error) {
-    console.error("Gemini error:", error);
-    return Response.json({ error: error.message }, { status: 500 });
+  } 
+catch (error) {
+  console.error('Gemini error:', error);
+  
+  if (error.status === 429) {
+    return new Response(JSON.stringify({ 
+      message: "I'm experiencing high demand right now. Please try again in a moment! 🙏",
+      role: 'assistant'
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
+  
+  return new Response(JSON.stringify({ 
+    error: 'Failed to generate response',
+    details: error.message 
+  }), {
+    status: 500,
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
