@@ -43,7 +43,7 @@ export async function POST(request) {
     const { messages } = await request.json();
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash",
       systemInstruction: `You are InkanyeziBot, an expert AI sales assistant for Inkanyezi Technologies, an AI automation company based in Durban, South Africa.
 
 YOUR GOAL: Have a natural, consultative conversation to understand the prospect's business challenges and show them how Inkanyezi Technologies can solve them.
