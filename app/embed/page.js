@@ -1,7 +1,13 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 
+// Generate a unique session ID for this browser session
+function generateSessionId() {
+  return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
 export default function EmbedPage() {
+  const [sessionId] = useState(() => generateSessionId());
   const [messages, setMessages] = useState([
     { role: 'assistant', content: 'Sawubona! 👋 I\'m InkanyeziBot, your AI sales assistant from Inkanyezi Technologies.\n\n📋 By chatting, you agree to our POPIA-compliant data policy.\n\nWhat\'s your name?' }
   ]);
@@ -58,7 +64,7 @@ export default function EmbedPage() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ messages: newMessages, sessionId }),
       });
       const data = await response.json();
       setMessages([...newMessages, { role: 'assistant', content: data.message }]);
@@ -81,7 +87,7 @@ export default function EmbedPage() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ messages: newMessages, sessionId }),
       });
       const data = await response.json();
       setMessages([...newMessages, { role: 'assistant', content: data.message }]);
@@ -195,7 +201,6 @@ export default function EmbedPage() {
           zIndex: 100, display: 'flex', overflow: 'hidden',
           pointerEvents: doorsOpen ? 'none' : 'all'
         }}>
-          {/* LEFT DOOR */}
           <div className={doorsOpen ? 'door-open-left' : ''} style={{ width: '50%', height: '100%', position: 'relative', overflow: 'hidden', flexShrink: 0 }}>
             <svg width="100%" height="100%" viewBox="0 0 200 600" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
@@ -216,7 +221,6 @@ export default function EmbedPage() {
               </defs>
               <rect width="200" height="600" fill="url(#doorBgL)"/>
               <path d="M8,20 L192,8 L192,592 L8,580 Z" fill="url(#panelGradL)" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.4"/>
-              <path d="M22,45 L178,32 L178,568 L22,555 Z" fill="#0a1628" stroke="#f97316" strokeWidth="0.8" strokeOpacity="0.25"/>
               <path d="M8,20 L192,8 L192,80 L8,95 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
               <path d="M8,505 L192,520 L192,592 L8,580 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
               <path d="M22,108 L178,96 L178,504 L22,492 Z" fill="#0c1e3a" stroke="#f97316" strokeWidth="0.8" strokeOpacity="0.3"/>
@@ -233,15 +237,11 @@ export default function EmbedPage() {
                 </g>
               ))}
               <polygon points="100,10 88,30 112,30" fill="#f97316" fillOpacity="0.9" filter="url(#glow)"/>
-              <path d="M15,28 L15,55 M15,28 L40,25" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.7" fill="none"/>
-              <path d="M185,15 L185,42 M185,15 L160,12" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.7" fill="none"/>
               <rect x="175" y="0" width="25" height="600" fill="url(#edgeGlowL)"/>
               <rect x="8" y="590" width="184" height="10" fill="#f97316" fillOpacity="0.7" style={{animation: 'engineGlow 0.8s ease-in-out infinite'}}/>
               <rect x="0" y="0" width="200" height="4" fill="url(#energyL)" style={{animation: 'scanSweep 1.5s ease-in-out 0.3s forwards'}}/>
             </svg>
           </div>
-
-          {/* RIGHT DOOR */}
           <div className={doorsOpen ? 'door-open-right' : ''} style={{ width: '50%', height: '100%', position: 'relative', overflow: 'hidden', flexShrink: 0 }}>
             <svg width="100%" height="100%" viewBox="0 0 200 600" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
@@ -261,7 +261,6 @@ export default function EmbedPage() {
               </defs>
               <rect width="200" height="600" fill="url(#doorBgR)"/>
               <path d="M8,8 L192,20 L192,580 L8,592 Z" fill="url(#panelGradR)" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.4"/>
-              <path d="M22,32 L178,45 L178,555 L22,568 Z" fill="#0a1628" stroke="#f97316" strokeWidth="0.8" strokeOpacity="0.25"/>
               <path d="M8,8 L192,20 L192,95 L8,80 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
               <path d="M8,520 L192,505 L192,580 L8,592 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
               <path d="M22,96 L178,108 L178,492 L22,504 Z" fill="#0c1e3a" stroke="#f97316" strokeWidth="0.8" strokeOpacity="0.3"/>
@@ -278,8 +277,6 @@ export default function EmbedPage() {
                 </g>
               ))}
               <polygon points="100,10 88,30 112,30" fill="#f97316" fillOpacity="0.9" filter="url(#glow)"/>
-              <path d="M15,12 L15,38 M15,12 L40,15" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.7" fill="none"/>
-              <path d="M185,25 L185,52 M185,25 L160,28" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.7" fill="none"/>
               <rect x="0" y="0" width="25" height="600" fill="url(#edgeGlowR)"/>
               <rect x="8" y="590" width="184" height="10" fill="#f97316" fillOpacity="0.7" style={{animation: 'engineGlow 0.8s ease-in-out infinite'}}/>
               <rect x="0" y="0" width="200" height="4" fill="url(#energyR)" style={{animation: 'scanSweep 1.5s ease-in-out 0.3s forwards'}}/>
@@ -290,7 +287,6 @@ export default function EmbedPage() {
 
       {/* MAIN CONTENT */}
       <div className="content-reveal" style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', position: 'relative', zIndex: 1 }}>
-
         {stars.map(star => (
           <div key={star.id} className="star-pulse" style={{
             position: 'absolute', left: `${star.x}%`, top: `${star.y}%`,
@@ -299,7 +295,6 @@ export default function EmbedPage() {
             '--duration': `${star.duration}s`, pointerEvents: 'none', zIndex: 0
           }} />
         ))}
-
         {shootingStars.map(star => (
           <div key={star.id} style={{
             position: 'absolute', left: `${star.startX}%`, top: `${star.startY}%`,
@@ -365,7 +360,6 @@ export default function EmbedPage() {
               }} dangerouslySetInnerHTML={{ __html: formatMessage(msg.content) }} />
             </div>
           ))}
-
           {isLoading && (
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px' }}>
               <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'linear-gradient(135deg, #f97316, #c2410c)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', boxShadow: '0 0 8px rgba(249,115,22,0.5)' }}>⭐</div>
@@ -390,21 +384,13 @@ export default function EmbedPage() {
                 { label: '📅 Book a free demo', text: 'Book a free demo' },
                 { label: '💬 Automate my WhatsApp', text: 'Automate my WhatsApp' },
               ].map((chip, i) => (
-                <button
-                  key={i}
-                  className="chip-btn"
-                  onClick={() => sendChip(chip.text)}
-                  style={{
-                    padding: '7px 14px',
-                    borderRadius: '20px',
-                    background: 'rgba(249,115,22,0.1)',
-                    border: '1px solid rgba(249,115,22,0.4)',
-                    color: '#ffffff',
-                    fontSize: '12px',
-                    fontFamily: 'sans-serif',
-                    outline: 'none',
-                  }}
-                >
+                <button key={i} className="chip-btn" onClick={() => sendChip(chip.text)} style={{
+                  padding: '7px 14px', borderRadius: '20px',
+                  background: 'rgba(249,115,22,0.1)',
+                  border: '1px solid rgba(249,115,22,0.4)',
+                  color: '#ffffff', fontSize: '12px',
+                  fontFamily: 'sans-serif', outline: 'none',
+                }}>
                   {chip.label}
                 </button>
               ))}
