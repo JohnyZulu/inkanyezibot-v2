@@ -1,121 +1,114 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { NextResponse } from 'next/server';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/79mjaa3s26c6bsr3lpfqmx5nwu5sa489";
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
-async function sendToMake(leadData) {
-  try {
-    await fetch(MAKE_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...leadData,
-        timestamp: new Date().toISOString(),
-        source: "InkanyeziBot Website Chat",
-      }),
-    });
-  } catch (error) {
-    console.error("Make.com webhook error:", error);
-  }
-}
+const SYSTEM_PROMPT = `You are InkanyeziBot, an AI sales assistant for Inkanyezi Technologies, an AI automation company based in Durban, South Africa.
 
-function extractLeadData(messages) {
-  const conversation = messages.map((m) => m.content).join(" ");
-  const emailMatch = conversation.match(/[\w.-]+@[\w.-]+\.\w+/);
-  const phoneMatch = conversation.match(/(\+27|0)[0-9]{9}/);
-  const nameMatch = conversation.match(/(?:my name is|i am|i'm|name:|called)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
-  const companyMatch = conversation.match(/(?:company|business|work at|from|represent)\s+([A-Z][a-zA-Z\s]+?)(?:\.|,|\s+and|\s+we)/i);
-  return {
-    email: emailMatch ? emailMatch[0] : null,
-    phone: phoneMatch ? phoneMatch[0] : null,
-    name: nameMatch ? nameMatch[1] : null,
-    company: companyMatch ? companyMatch[1] : null,
-  };
-}
+RESPONSE RULES — NON-NEGOTIABLE:
+- Maximum 2-3 short sentences per response
+- Never ask for more than ONE piece of information at a time
+- WhatsApp style — brief, warm, conversational
+- Never repeat anything already said
+- Use bullet points only when listing 3+ items
+- If user writes in isiZulu or Afrikaans, respond in that language but keep responses equally short
 
-function isQualifiedLead(messages) {
-  const data = extractLeadData(messages);
-  return data.email && data.phone;
-}
+CONVERSATION FLOW — follow this order, one step at a time:
+1. Greet warmly → ask for their name only
+2. Ask for their business name only
+3. Ask what industry they are in and how many staff
+4. Ask their biggest operational challenge
+5. Ask if they currently use any automation or software tools
+6. Based on answers, recommend 1-2 relevant Inkanyezi services from this list:
+   - WhatsApp AI Agent (R3,000/month) — 24/7 customer responses
+   - Website Chatbot (R2,000/month) — lead capture and qualification
+   - Automation Backend (R2,000/month) — connect all your systems
+   - Operational App (R1,500/month) — mobile app for your staff
+   - AI Dashboard (R1,500/month) — real-time business reporting
+7. Offer to book a free demo call
+8. Collect phone number and email — one at a time — only after they show interest
+
+LEAD CAPTURE — collect these one at a time, only when conversation is warm:
+- Full name
+- Business name
+- Phone number
+- Email address
+
+ESCALATION — if asked anything you cannot answer confidently:
+"Let me connect you with Sanele directly — he'll get back to you within 24 hours."
+
+POPIA NOTICE — include this only in your very first message:
+"By chatting, you agree to our POPIA-compliant data policy."
+
+CLOSE EVERY RESPONSE WITH one short curious question to keep the conversation going.`;
 
 export async function POST(request) {
   try {
-    const { messages } = await request.json();
+    const { message, sessionId, history = [] } = await request.json();
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      systemInstruction: `You are InkanyeziBot, an expert AI sales assistant for Inkanyezi Technologies, an AI automation company based in Durban, South Africa.
-
-YOUR GOAL: Have a natural, consultative conversation to understand the prospect's business challenges and show them how Inkanyezi Technologies can solve them.
-
-CONVERSATION FLOW:
-1. Greet warmly and collect: name, business name, phone, email
-2. Ask about their business - what they do, how many staff, industry
-3. Ask about their biggest operational challenges and pain points
-4. Ask what tasks take up most of their time
-5. Ask if they currently use any software or automation tools
-6. Based on their answers, explain which of our 5 services would help them:
-   - WhatsApp AI Assistant (customer communication)
-   - Website AI Chatbot (lead generation)
-   - AppSheet Operational App (staff management)
-   - Looker Studio Dashboard (business insights)
-   - Make.com Automation Engine (workflow automation)
-7. Share relevant pricing: Starter R3,000/month, Growth R6,000/month, Enterprise R10,000/month
-8. Only after a deep conversation, offer to book a discovery call
-
-RULES:
-- Ask ONE question at a time
-- Listen carefully and respond to what they say
-- Be consultative, not pushy
-- Use their name once you know it
-- Respond in whatever language the user writes in
-- Use emojis naturally but professionally
-- Never rush to close, build rapport first
-- If they mention a specific problem, dig deeper with follow-up questions
-- Always collect name, company, phone and email before ending conversation
-- Add this to your first message only: By chatting with us, you agree that your information may be used to contact you about our services, in accordance with POPIA.`,
-    });
-
-    const history = messages.slice(0, -1).filter((msg, index) => {
-      if (index === 0 && msg.role === "assistant") return false;
-      if (!msg.content || msg.content.trim() === "") return false;
-      return true;
-    }).map((msg) => ({
-      role: msg.role === "assistant" ? "model" : "user",
-      parts: [{ text: msg.content }],
-    }));
-
-    const chat = model.startChat({ history });
-    const lastMessage = messages[messages.length - 1].content;
-    const result = await chat.sendMessage(lastMessage);
-    const text = result.response.text();
-
-    if (isQualifiedLead(messages)) {
-      const leadData = extractLeadData(messages);
-      const fullConversation = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
-      await sendToMake({ ...leadData, enquiry: fullConversation });
+    if (!message || message.trim() === '') {
+      return NextResponse.json({ error: 'Message is required' }, { status: 400 });
     }
 
-    return Response.json({ message: text });
-  } 
-catch (error) {
-  console.error('Gemini error:', error);
-  
-  if (error.status === 429) {
-    return new Response(JSON.stringify({ 
-      message: "I'm experiencing high demand right now. Please try again in a moment! 🙏",
-      role: 'assistant'
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    // Build conversation history — filter first assistant message to satisfy Gemini role requirement
+    const conversationHistory = history
+      .filter((msg, index) => !(index === 0 && msg.role === 'model'))
+      .map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.content || msg.text || '' }]
+      }))
+      .filter(msg => msg.parts[0].text !== '');
+
+    const requestBody = {
+      system_instruction: {
+        parts: [{ text: SYSTEM_PROMPT }]
+      },
+      contents: [
+        ...conversationHistory,
+        { role: 'user', parts: [{ text: message }] }
+      ],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 400,
+        topP: 0.9
+      }
+    };
+
+    const geminiResponse = await fetch(
+      `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      }
+    );
+
+    if (!geminiResponse.ok) {
+      const errorData = await geminiResponse.json();
+      console.error('Gemini API error:', errorData);
+      return NextResponse.json({ error: 'AI service error' }, { status: 500 });
+    }
+
+    const geminiData = await geminiResponse.json();
+    const aiReply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not process that. Please try again.';
+
+    // Fire-and-forget webhook to Make.com — does not block response
+    if (process.env.MAKE_WEBHOOK_URL) {
+      fetch(process.env.MAKE_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sessionId,
+          message: message,
+          reply: aiReply,
+          timestamp: new Date().toISOString()
+        })
+      }).catch(err => console.error('Make.com webhook error:', err));
+    }
+
+    return NextResponse.json({ reply: aiReply });
+
+  } catch (error) {
+    console.error('Chat route error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-  
-  return new Response(JSON.stringify({ 
-    error: 'Failed to generate response',
-    details: error.message 
-  }), {
-    status: 500,
-    headers: { 'Content-Type': 'application/json' }
-  });
 }
