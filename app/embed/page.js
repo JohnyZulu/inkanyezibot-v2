@@ -46,6 +46,27 @@ export default function EmbedPage() {
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
+    const sendChip = async (text) => {
+    if (isLoading) return;
+    triggerShootingStar();
+    const userMessage = { role: 'user', content: text };
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: newMessages }),
+      });
+      const data = await response.json();
+      setMessages([...newMessages, { role: 'assistant', content: data.message }]);
+    } catch (error) {
+      setMessages([...newMessages, { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
     triggerShootingStar();
     const userMessage = { role: 'user', content: input };
     const newMessages = [...messages, userMessage];
