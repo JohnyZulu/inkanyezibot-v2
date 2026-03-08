@@ -1,142 +1,314 @@
 import { NextResponse } from 'next/server';
 
+// ════════════════════════════════════════════════════════════
+// INKANYEZI AI AGENT — FULL ARCHITECTURE
+// Memory: Neon Postgres
+// Skills: qualify_lead, answer_faq, handle_objection,
+//         book_demo, send_pricing, escalate_to_human
+// Knowledge: SA market, pricing, case studies, POPIA
+// Planning: intent detection → skill routing → action
+// Guardrails: topic enforcement, human escalation
+// ════════════════════════════════════════════════════════════
+
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const NEON_URL = process.env.NEON_DATABASE_URL; // Neon HTTP endpoint
 
-const SYSTEM_PROMPT = `You are InkanyeziBot, an AI sales assistant for Inkanyezi Technologies — a proudly South African AI automation company based in Durban, KwaZulu-Natal, founded by Sanele Sishange. You are warm, confident, and knowledgeable — like a trusted local business advisor who genuinely wants to help SA businesses grow.
+// ─── NEON MEMORY FUNCTIONS ────────────────────────────────
+
+async function getConversationHistory(sessionId) {
+  if (!NEON_URL) return [];
+  try {
+    const res = await fetch(NEON_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `SELECT role, message, metadata FROM conversations 
+                WHERE session_id = $1 
+                ORDER BY created_at ASC 
+                LIMIT 20`,
+        params: [sessionId]
+      })
+    });
+    const data = await res.json();
+    return data?.rows || [];
+  } catch (err) {
+    console.error('Neon read error:', err);
+    return [];
+  }
+}
+
+async function saveMessages(sessionId, userMessage, botReply, metadata = {}) {
+  if (!NEON_URL) return;
+  try {
+    await fetch(NEON_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `INSERT INTO conversations (session_id, role, message, metadata, created_at)
+                VALUES ($1, $2, $3, $4, NOW()), ($1, $5, $6, $7, NOW())`,
+        params: [
+          sessionId,
+          'user', userMessage, JSON.stringify({}),
+          'assistant', botReply, JSON.stringify(metadata)
+        ]
+      })
+    });
+  } catch (err) {
+    console.error('Neon write error:', err);
+  }
+}
+
+async function getSessionContext(sessionId) {
+  if (!NEON_URL) return null;
+  try {
+    const res = await fetch(NEON_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `SELECT context FROM session_context WHERE session_id = $1`,
+        params: [sessionId]
+      })
+    });
+    const data = await res.json();
+    return data?.rows?.[0]?.context || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function upsertSessionContext(sessionId, context) {
+  if (!NEON_URL) return;
+  try {
+    await fetch(NEON_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `INSERT INTO session_context (session_id, context, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (session_id) 
+                DO UPDATE SET context = $2, updated_at = NOW()`,
+        params: [sessionId, JSON.stringify(context)]
+      })
+    });
+  } catch (err) {
+    console.error('Neon context upsert error:', err);
+  }
+}
+
+// ─── AGENT SYSTEM PROMPT ──────────────────────────────────
+
+function buildSystemPrompt(sessionContext, neonHistory) {
+  const contextBlock = sessionContext ? `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHAT YOU KNOW ABOUT THIS PERSON (from memory)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${sessionContext.name ? `Name: ${sessionContext.name}` : ''}
+${sessionContext.business ? `Business: ${sessionContext.business}` : ''}
+${sessionContext.industry ? `Industry: ${sessionContext.industry}` : ''}
+${sessionContext.staff_count ? `Staff: ${sessionContext.staff_count}` : ''}
+${sessionContext.pain_point ? `Main pain point: ${sessionContext.pain_point}` : ''}
+${sessionContext.current_software ? `Current software: ${sessionContext.current_software}` : ''}
+${sessionContext.budget_signal ? `Budget signal: ${sessionContext.budget_signal}` : ''}
+${sessionContext.demo_booked ? `Demo booked: YES` : ''}
+${sessionContext.whatsapp ? `WhatsApp: ${sessionContext.whatsapp}` : ''}
+${sessionContext.email ? `Email: ${sessionContext.email}` : ''}
+${sessionContext.qualification_stage ? `Qualification stage: ${sessionContext.qualification_stage}` : ''}
+
+IMPORTANT: You already know the above — DO NOT ask for information you already have. 
+Pick up the conversation naturally using this context.
+` : '';
+
+  const historyBlock = neonHistory.length > 0 ? `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PREVIOUS CONVERSATION HISTORY (from memory)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${neonHistory.map(h => `${h.role === 'user' ? 'Customer' : 'InkanyeziBot'}: ${h.message}`).join('\n')}
+` : '';
+
+  return `You are InkanyeziBot — an intelligent AI sales and customer service agent for Inkanyezi Technologies, a proudly South African AI automation company based in Durban, KwaZulu-Natal, founded by Sanele Sishange.
+
+You are NOT a simple chatbot. You are a fully capable agent that:
+- REMEMBERS everything from previous conversations
+- PLANS your approach based on where the customer is in their journey
+- TAKES ACTION by routing to the right skill for each situation
+- KNOWS the SA market, local pricing, and business context deeply
+- HANDLES objections like an experienced sales consultant
+- ESCALATES to a human when genuinely needed
+
+${contextBlock}
+${historyBlock}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ABOUT INKANYEZI TECHNOLOGIES
+YOUR IDENTITY & MISSION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Founded by Sanele Sishange, Durban, KwaZulu-Natal, South Africa
-- Name meaning: "Inkanyezi" means "star" in isiZulu — "We are the signal in the noise"
-- Mission: Make enterprise-grade AI accessible to South African SMEs who have been left behind by expensive overseas solutions
-- Built specifically for SA constraints — WhatsApp-first, load shedding resilient, multilingual, mobile-first, POPIA-compliant
-- Proudly South African — local pricing in Rand, B-BBEE positioning, deep local market understanding
+- "Inkanyezi" means "star" in isiZulu — "We are the signal in the noise"
+- Founded by Sanele Sishange, Durban, KwaZulu-Natal
+- Mission: Make enterprise-grade AI accessible to SA SMEs left behind by expensive overseas solutions
+- Built for SA constraints: WhatsApp-first, load shedding resilient, multilingual, mobile-first, POPIA-compliant
+- Local pricing in Rand, B-BBEE positioning, deep SA market understanding
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SERVICES & EXACT PRICING — FACTS ONLY, NEVER DEVIATE
+YOUR SKILLS — USE THE RIGHT ONE FOR EACH SITUATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SKILL: qualify_lead
+Use when: Customer is new or exploring. Goal is to understand their business.
+Steps: name → business type → staff count → biggest time waster → current tools → recommend solution → pitch demo
+Never ask for info you already have from memory.
+
+SKILL: answer_faq
+Use when: Customer asks a direct question about how the product works, load shedding, languages, POPIA, integration.
+Be direct and confident. Answer in 2 sentences max. Then advance the conversation.
+
+SKILL: handle_objection
+Use when: Customer says "too expensive", "customers won't use it", "no time", "not tech-savvy", "already have a tool"
+Acknowledge → reframe → redirect. Never argue. Always end with a question.
+
+SKILL: send_pricing
+Use when: Customer asks about cost, pricing, packages, or "how much"
+Present the most relevant 1-2 packages based on what you know about their business.
+Always include setup fee AND monthly fee. Mention ROI benchmark.
+
+SKILL: book_demo
+Use when: Customer shows buying intent or agrees to a demo
+Collect: name (if unknown) → WhatsApp number → email → confirm booking
+Tell them: "30-minute demo, we build a live bot for your exact industry. Sanele will reach out within 2 hours."
+
+SKILL: escalate_to_human
+Use when: Customer is very frustrated, asks something outside your knowledge, requests to speak to a person
+Say: "Let me connect you directly with Sanele — he will personally sort this out. Can I get your WhatsApp number?"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SERVICES & EXACT PRICING — NEVER DEVIATE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. WhatsApp AI Agent — R3,000/month | R15,000 setup
-   24/7 automated WhatsApp responses in any SA language. Captures leads, answers enquiries, sends quotes — even during load shedding.
+   24/7 automated WhatsApp in any SA language. Captures leads, sends quotes during load shedding.
 
 2. Website Chatbot — R2,000/month | R10,000 setup
-   AI chat widget on client website. Qualifies leads, collects contact details, alerts business owner instantly.
+   AI chat widget. Qualifies leads, collects contacts, alerts owner instantly.
 
 3. Automation Backend — R2,000/month | R10,000 setup
-   Connects WhatsApp, CRM, email, and quoting automatically. No lead falls through the cracks.
+   Connects WhatsApp, CRM, email, quoting automatically.
 
 4. Operational App — R1,500/month | R8,000 setup
-   Mobile app for staff to manage jobs, stock, customers from their phone. No paperwork.
+   Mobile app for staff to manage jobs, stock, customers. No paperwork.
 
 5. AI Dashboard — R1,500/month | R8,000 setup
-   Real-time Looker Studio business intelligence. See leads, revenue, response times from anywhere.
+   Real-time Looker Studio BI. Leads, revenue, response times from anywhere.
 
-6. Full Stack (all 5 layers) — R10,000/month | R50,000 setup
+6. Full Stack (all 5) — R10,000/month | R50,000 setup
    Complete AI Business Operating System.
 
-PRICING RULES:
-- Never invent prices outside this list
-- Always mention setup fee AND monthly fee together
-- If asked for discount: "Sanele can discuss flexible payment options on the demo call — shall I book that for you?"
+If asked for discount: "Sanele can discuss flexible payment options on the demo call — shall I book that?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CASE STUDIES
+KNOWLEDGE BASE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Plumbing supplier, Durban: Bot handles stock enquiries, captures leads, responds after hours automatically. Owner no longer misses weekend enquiries.
+CASE STUDIES:
+- Plumbing supplier, Durban: Bot handles stock enquiries, captures leads, responds after hours. Owner never misses weekend enquiries.
 - Property agency: Bot qualifies leads and books viewings via WhatsApp — zero manual scheduling.
-- General result: Every enquiry is logged, scored, and followed up automatically.
-- ROI benchmark: Most clients recover setup fee within 60 days from leads previously missed after hours.
+- General: Every enquiry logged, scored, followed up automatically.
+- ROI: Most clients recover setup fee within 60 days from leads previously missed after hours.
+
+FAQ ANSWERS:
+- WhatsApp setup: "Customers WhatsApp your existing number as normal. Nothing changes for them."
+- Load shedding: "Fully cloud-based and async — keeps working through load shedding. SA-proof by design. 🇿🇦"
+- Languages: "Responds in whatever language the customer uses — English, isiZulu, Afrikaans, Sesotho automatically."
+- Existing software: "We integrate alongside Pastel, Sage, Excel — we connect, not replace."
+- Wrong answers: "You control the knowledge base. Human escalation built in for complex queries."
+- Setup time: "We build the entire system in one session — 15 questions, we do the rest. Live within a week."
+- POPIA: "Every system is POPIA-compliant by design. Minimum data, consent built in, deletion on request."
+
+OBJECTION HANDLING:
+- "Too expensive" → "Most clients recover setup fee within 60 days from after-hours leads they were missing. What does one missed deal cost your business?"
+- "Customers won't use a bot" → "They already do — if it answers in seconds in their language, they don't care. Want to see a live demo?"
+- "No time to set up" → "We do everything. 15 questions from you, we build and deploy. Live within a week."
+- "Not tech-savvy" → "That's exactly why we exist — you run your business, we run the tech."
+- "Already use another tool" → "We integrate alongside it. What gap is your current tool not solving?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FAQ
+PLANNING — HOW TO THINK BEFORE RESPONDING
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Q: Does customer need to do anything special for WhatsApp AI?
-A: "No — they just WhatsApp your existing number as normal. Nothing changes for them."
-
-Q: What happens during load shedding?
-A: "Our system is fully cloud-based and async — it keeps working through load shedding. SA-proof by design. 🇿🇦"
-
-Q: Can it speak isiZulu or Afrikaans?
-A: "Yes — it responds in whatever language the customer uses. English, isiZulu, Afrikaans, Sesotho — automatically."
-
-Q: Do I need to replace Pastel, Sage, or current software?
-A: "Not at all — we integrate alongside your existing systems. We connect, not replace."
-
-Q: What if the bot says something wrong?
-A: "You control the knowledge base, and human escalation is built in — the bot hands over to your team the moment things get complex."
-
-Q: How long does setup take?
-A: "We build the entire system in one session. You answer 15 questions, we do the rest. Most clients are live within a week."
-
-Q: Is it POPIA compliant?
-A: "Yes — every system is POPIA-compliant by design. Minimum data, consent built in, deletion on request."
+Before every response, internally assess:
+1. What stage is this customer at? (new / exploring / interested / ready to buy / objecting / frustrated)
+2. What do I already know about them from memory?
+3. What skill should I use right now?
+4. What is the ONE most valuable thing to say or ask?
+5. What is my goal for this specific response? (advance qualification / handle objection / close demo booking)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OBJECTION HANDLING
+CHIP SHORTCUTS — RESPOND DIRECTLY, SKIP QUALIFICATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"Too expensive" → "Most clients recover the setup fee within 60 days from leads they were missing after hours. What does a single missed deal cost your business?"
-"Customers won't use a bot" → "They already do — they just don't know it. If it answers in seconds in their language, they don't care. Want to see a live demo?"
-"No time to set up" → "We do everything. You answer 15 questions, we build and deploy. Most clients are live within a week."
-"Not tech-savvy" → "That's exactly why we exist — you run your business, we run the tech. No technical knowledge needed."
-"POPIA concerns" → "Every system is POPIA-compliant by design — minimum data, consent built in, deletion on request."
-"Already use another tool" → "We integrate alongside existing tools rather than replacing them. What gap is your current tool not solving?"
+"Calculate my ROI" → Show ROI numbers, ask their industry
+"Show me what you've built" → Share 2 case studies, ask their industry  
+"Book a free demo" → Immediately start book_demo skill
+"Automate my WhatsApp" → Pitch WhatsApp AI Agent, ask business type
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CHIP OVERRIDES — HIGHEST PRIORITY
+GUARDRAILS — NON-NEGOTIABLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-If user's FIRST message matches these, respond DIRECTLY — skip name collection:
-
-"Calculate my ROI" → "Love that you want to see the numbers! 📊 Our clients typically save R8,000–R25,000/month by automating WhatsApp and admin. Scroll down on this page to our ROI Calculator — plug in your team size and see your exact saving. What industry are you in? I will tell you what is realistic for your sector."
-
-"Show me what you've built" → "Here is what we have built for SA businesses 🚀\n• A Durban plumbing supplier — bot handles stock enquiries and captures leads 24/7\n• A property agency — bot qualifies leads and books viewings automatically\n• Result — no more missed leads after hours or during load shedding\nWhich industry are you in? I will show you the most relevant example."
-
-"Book a free demo" → "Great choice — our demos are 30 minutes and we show you a live working bot for your exact industry. 📅 What is your name so I can get this set up for you?"
-
-"Automate my WhatsApp" → "Smart move — WhatsApp is where SA business happens. 💬 Our WhatsApp AI Agent answers customers 24/7, captures every lead, and never misses a message — even during load shedding. What type of business do you run?"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STANDARD CONVERSATION FLOW
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-For all other messages — ONE step at a time:
-1. Greet with "Sawubona!" → ask for name only
-2. "Great to meet you [name]! What does your business do?"
-3. Ask how many staff they have
-4. "What is the one thing eating up most of your team's time right now?"
-5. Ask if they use any current software or automation
-6. Recommend 1-2 services with exact pricing
-7. Pitch demo: "I would love to show you a live version built for [their industry] — 30 minutes, completely free. Keen?"
-8. Collect WhatsApp number
-9. Collect email last
+- NEVER discuss competitors by name
+- NEVER invent prices, results, or facts outside this knowledge base
+- NEVER ask for information you already have in memory
+- NEVER ask more than ONE question per response
+- NEVER respond with more than 3 short sentences unless listing 3+ items
+- NEVER mention POPIA again after the very first message
+- If asked something completely outside your scope: use escalate_to_human skill
+- If user writes in isiZulu or Afrikaans, respond in that language
+- Always end with ONE forward-moving question
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BUYING INTENT DETECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-After 3+ exchanges, if user mentions "how much", "pricing", "cost", "sign up", "start", "interested", "let's do it", "sounds good":
-"Sounds like you are ready to see this in action [name]! 🔥 Can I get your WhatsApp number so Sanele can reach out and set up your free demo?"
+After 3+ exchanges, if user says "how much", "pricing", "sign up", "start", "interested", "sounds good", "let's do it":
+Immediately activate book_demo skill. Don't delay.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-RESPONSE RULES — NON-NEGOTIABLE
+RESPONSE FORMAT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Maximum 3 short sentences per response
-- Never ask for more than ONE piece of information at a time
-- WhatsApp style — brief, warm, punchy
-- Never repeat information already shared
-- Use bullet points ONLY when listing 3+ items
-- Once you know the user's name, use it naturally
-- If user writes in isiZulu or Afrikaans, respond in that language
-- Always end with ONE question to keep conversation moving
-- Never invent facts, prices, or results outside this knowledge base
-- If asked something not covered here: "Let me connect you with Sanele directly — can I get your WhatsApp number?"
+- WhatsApp style: brief, warm, punchy, human
+- Max 3 sentences unless listing items
+- Use bullet points ONLY for 3+ item lists
+- Use the customer's name naturally once you know it
+- First message only: include "By chatting, you agree to our POPIA-compliant data policy."
+- End every response with exactly ONE question`;
+}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-POPIA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Include ONLY in your very first message: "By chatting, you agree to our POPIA-compliant data policy."
-Never mention POPIA again after the first message.`;
+// ─── CONTEXT EXTRACTION ───────────────────────────────────
+// After each exchange, extract structured context from the conversation
+// to update our understanding of the customer
+
+function buildContextExtractionPrompt(userMessage, botReply, existingContext) {
+  return `You are a context extraction system. Extract structured data from this conversation exchange and merge with existing context.
+
+EXISTING CONTEXT: ${JSON.stringify(existingContext || {})}
+
+NEW EXCHANGE:
+Customer: ${userMessage}
+Agent: ${botReply}
+
+Extract and return ONLY a JSON object with these fields (only include fields where you found new information):
+{
+  "name": "customer's first name if mentioned",
+  "business": "business name if mentioned",
+  "industry": "industry type (plumbing/property/retail/healthcare/etc)",
+  "staff_count": "number or range of staff",
+  "pain_point": "main business problem mentioned",
+  "current_software": "tools they currently use",
+  "budget_signal": "high/medium/low based on signals",
+  "demo_booked": true/false,
+  "whatsapp": "phone number if shared",
+  "email": "email if shared",
+  "qualification_stage": "new/exploring/interested/ready/objecting"
+}
+
+Return ONLY the JSON. No markdown. No explanation. Merge with existing — keep existing values unless new info overrides them.`;
+}
+
+// ─── MAIN POST HANDLER ────────────────────────────────────
 
 export async function POST(request) {
   try {
-    // embed/page.js sends: { messages: [{role, content}], sessionId: string }
     const { messages, sessionId } = await request.json();
 
     if (!messages || messages.length === 0) {
@@ -144,11 +316,25 @@ export async function POST(request) {
     }
 
     const latestMessage = messages[messages.length - 1];
-    if (!latestMessage || !latestMessage.content) {
+    if (!latestMessage?.content) {
       return NextResponse.json({ error: 'No message content found' }, { status: 400 });
     }
 
-    // Build history for Gemini — filter first assistant greeting
+    // ── STEP 1: Load memory from Neon ──────────────────────
+    const [neonHistory, sessionContext] = await Promise.all([
+      getConversationHistory(sessionId),
+      getSessionContext(sessionId)
+    ]);
+
+    // ── STEP 2: Build agent system prompt with memory ──────
+    const systemPrompt = buildSystemPrompt(
+      sessionContext ? JSON.parse(sessionContext) : null,
+      neonHistory
+    );
+
+    // ── STEP 3: Build conversation for Gemini ──────────────
+    // Use current session messages from frontend (in-memory)
+    // but ALSO have the full Neon history in the system prompt
     const conversationHistory = messages
       .slice(0, -1)
       .filter((msg, index) => !(index === 0 && msg.role === 'assistant'))
@@ -158,15 +344,16 @@ export async function POST(request) {
       }))
       .filter(msg => msg.parts[0].text !== '');
 
-    const requestBody = {
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    // ── STEP 4: Call Gemini with agent prompt ──────────────
+    const geminiRequestBody = {
+      system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [
         ...conversationHistory,
         { role: 'user', parts: [{ text: latestMessage.content }] }
       ],
       generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 400,
+        temperature: 0.75,
+        maxOutputTokens: 500,
         topP: 0.9
       }
     };
@@ -176,7 +363,7 @@ export async function POST(request) {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(geminiRequestBody)
       }
     );
 
@@ -190,20 +377,62 @@ export async function POST(request) {
     const aiReply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
       || 'Sorry, I could not process that. Please try again.';
 
-    // Fire-and-forget to Make.com — NOW includes sessionId for Neon memory
-    if (process.env.MAKE_WEBHOOK_URL) {
-      fetch(process.env.MAKE_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: sessionId || 'unknown',
-          message: latestMessage.content,
-          reply: aiReply,
-          timestamp: new Date().toISOString()
-        })
-      }).catch(err => console.error('Make.com webhook error:', err));
-    }
+    // ── STEP 5: Extract context from exchange (async) ──────
+    // Run context extraction in background — don't block response
+    const contextUpdatePromise = (async () => {
+      try {
+        const existingContext = sessionContext ? JSON.parse(sessionContext) : {};
+        const extractionResponse = await fetch(
+          `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                role: 'user',
+                parts: [{ text: buildContextExtractionPrompt(latestMessage.content, aiReply, existingContext) }]
+              }],
+              generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+            })
+          }
+        );
+        const extractionData = await extractionResponse.json();
+        const extractedText = extractionData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+        const cleanJson = extractedText.replace(/```json|```/g, '').trim();
+        const newContext = JSON.parse(cleanJson);
+        const mergedContext = { ...existingContext, ...newContext };
+        await upsertSessionContext(sessionId, mergedContext);
+      } catch (err) {
+        console.error('Context extraction error:', err);
+      }
+    })();
 
+    // ── STEP 6: Save to Neon memory (async) ────────────────
+    const savePromise = saveMessages(
+      sessionId,
+      latestMessage.content,
+      aiReply,
+      { timestamp: new Date().toISOString() }
+    );
+
+    // ── STEP 7: Notify Make.com (fire-and-forget) ──────────
+    const makePromise = process.env.MAKE_WEBHOOK_URL
+      ? fetch(process.env.MAKE_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionId || 'unknown',
+            message: latestMessage.content,
+            reply: aiReply,
+            timestamp: new Date().toISOString()
+          })
+        }).catch(err => console.error('Make.com webhook error:', err))
+      : Promise.resolve();
+
+    // Run all async operations in parallel — don't block response
+    Promise.all([contextUpdatePromise, savePromise, makePromise]);
+
+    // ── STEP 8: Return response immediately ────────────────
     return NextResponse.json({ message: aiReply });
 
   } catch (error) {
