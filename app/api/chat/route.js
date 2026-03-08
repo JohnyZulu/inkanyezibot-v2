@@ -11,16 +11,25 @@ import { NextResponse } from 'next/server';
 // ════════════════════════════════════════════════════════════
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-const NEON_URL = process.env.NEON_DATABASE_URL; // Neon HTTP endpoint
+const NEON_URL = process.env.NEON_DATABASE_URL;
+const NEON_API_KEY = process.env.NEON_API_KEY;
+
+// ─── NEON HEADERS ─────────────────────────────────────────
+function neonHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${NEON_API_KEY}`
+  };
+}
 
 // ─── NEON MEMORY FUNCTIONS ────────────────────────────────
 
 async function getConversationHistory(sessionId) {
-  if (!NEON_URL) return [];
+  if (!NEON_URL || !NEON_API_KEY) return [];
   try {
     const res = await fetch(NEON_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: neonHeaders(),
       body: JSON.stringify({
         query: `SELECT role, message, metadata FROM conversations 
                 WHERE session_id = $1 
@@ -30,6 +39,7 @@ async function getConversationHistory(sessionId) {
       })
     });
     const data = await res.json();
+    if (!res.ok) { console.error('Neon read HTTP error:', res.status, data); return []; }
     return data?.rows || [];
   } catch (err) {
     console.error('Neon read error:', err);
@@ -38,11 +48,11 @@ async function getConversationHistory(sessionId) {
 }
 
 async function saveMessages(sessionId, userMessage, botReply, metadata = {}) {
-  if (!NEON_URL) return;
+  if (!NEON_URL || !NEON_API_KEY) return;
   try {
-    await fetch(NEON_URL, {
+    const res = await fetch(NEON_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: neonHeaders(),
       body: JSON.stringify({
         query: `INSERT INTO conversations (session_id, role, message, metadata, created_at)
                 VALUES ($1, $2, $3, $4, NOW()), ($1, $5, $6, $7, NOW())`,
@@ -53,23 +63,25 @@ async function saveMessages(sessionId, userMessage, botReply, metadata = {}) {
         ]
       })
     });
+    if (!res.ok) { const d = await res.json(); console.error('Neon save error:', res.status, d); }
   } catch (err) {
     console.error('Neon write error:', err);
   }
 }
 
 async function getSessionContext(sessionId) {
-  if (!NEON_URL) return null;
+  if (!NEON_URL || !NEON_API_KEY) return null;
   try {
     const res = await fetch(NEON_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: neonHeaders(),
       body: JSON.stringify({
         query: `SELECT context FROM session_context WHERE session_id = $1`,
         params: [sessionId]
       })
     });
     const data = await res.json();
+    if (!res.ok) { console.error('Neon context read error:', res.status, data); return null; }
     return data?.rows?.[0]?.context || null;
   } catch (err) {
     return null;
@@ -77,11 +89,11 @@ async function getSessionContext(sessionId) {
 }
 
 async function upsertSessionContext(sessionId, context) {
-  if (!NEON_URL) return;
+  if (!NEON_URL || !NEON_API_KEY) return;
   try {
     await fetch(NEON_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: neonHeaders(),
       body: JSON.stringify({
         query: `INSERT INTO session_context (session_id, context, updated_at)
                 VALUES ($1, $2, NOW())
