@@ -26,16 +26,16 @@ function neonHeaders() {
 
 async function getConversationHistory(sessionId) {
   if (!NEON_URL || !NEON_API_KEY) return [];
+  const escape = (str) => String(str || '').replace(/'/g, "''");
   try {
     const res = await fetch(NEON_URL, {
       method: 'POST',
       headers: neonHeaders(),
       body: JSON.stringify({
-        query: `SELECT role, message, metadata FROM conversations 
-                WHERE session_id = $1 
+        query: `SELECT role, message FROM conversations 
+                WHERE session_id = '${escape(sessionId)}' 
                 ORDER BY created_at ASC 
-                LIMIT 20`,
-        params: [sessionId]
+                LIMIT 20`
       })
     });
     const data = await res.json();
@@ -49,21 +49,28 @@ async function getConversationHistory(sessionId) {
 
 async function saveMessages(sessionId, userMessage, botReply, metadata = {}) {
   if (!NEON_URL || !NEON_API_KEY) return;
+  const sid = String(sessionId || 'unknown');
+  const userMsg = String(userMessage || '');
+  const botMsg = String(botReply || '');
   try {
-    const res = await fetch(NEON_URL, {
+    // Insert user message
+    await fetch(NEON_URL, {
       method: 'POST',
       headers: neonHeaders(),
       body: JSON.stringify({
-        query: `INSERT INTO conversations (session_id, role, message, metadata, created_at)
-                VALUES ($1, $2, $3, $4, NOW()), ($1, $5, $6, $7, NOW())`,
-        params: [
-          sessionId,
-          'user', userMessage, JSON.stringify({}),
-          'assistant', botReply, JSON.stringify(metadata)
-        ]
+        query: 'INSERT INTO conversations (session_id, role, message, metadata, created_at) VALUES ($1, $2, $3, $4, NOW())',
+        params: [sid, 'user', userMsg, '{}']
       })
     });
-    if (!res.ok) { const d = await res.json(); console.error('Neon save error:', res.status, d); }
+    // Insert bot reply
+    await fetch(NEON_URL, {
+      method: 'POST',
+      headers: neonHeaders(),
+      body: JSON.stringify({
+        query: 'INSERT INTO conversations (session_id, role, message, metadata, created_at) VALUES ($1, $2, $3, $4, NOW())',
+        params: [sid, 'assistant', botMsg, JSON.stringify(metadata)]
+      })
+    });
   } catch (err) {
     console.error('Neon write error:', err);
   }
@@ -71,13 +78,13 @@ async function saveMessages(sessionId, userMessage, botReply, metadata = {}) {
 
 async function getSessionContext(sessionId) {
   if (!NEON_URL || !NEON_API_KEY) return null;
+  const escape = (str) => String(str || '').replace(/'/g, "''");
   try {
     const res = await fetch(NEON_URL, {
       method: 'POST',
       headers: neonHeaders(),
       body: JSON.stringify({
-        query: `SELECT context FROM session_context WHERE session_id = $1`,
-        params: [sessionId]
+        query: `SELECT context FROM session_context WHERE session_id = '${escape(sessionId)}'`
       })
     });
     const data = await res.json();
@@ -90,16 +97,17 @@ async function getSessionContext(sessionId) {
 
 async function upsertSessionContext(sessionId, context) {
   if (!NEON_URL || !NEON_API_KEY) return;
+  const escape = (str) => String(str || '').replace(/'/g, "''");
+  const contextJson = escape(JSON.stringify(context));
   try {
     await fetch(NEON_URL, {
       method: 'POST',
       headers: neonHeaders(),
       body: JSON.stringify({
         query: `INSERT INTO session_context (session_id, context, updated_at)
-                VALUES ($1, $2, NOW())
+                VALUES ('${escape(sessionId)}', '${contextJson}', NOW())
                 ON CONFLICT (session_id) 
-                DO UPDATE SET context = $2, updated_at = NOW()`,
-        params: [sessionId, JSON.stringify(context)]
+                DO UPDATE SET context = '${contextJson}', updated_at = NOW()`
       })
     });
   } catch (err) {
