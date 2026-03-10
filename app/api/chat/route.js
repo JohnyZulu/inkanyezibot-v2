@@ -312,6 +312,61 @@ Extract and return ONLY a JSON object with these fields (only include fields whe
 Return ONLY the JSON. No markdown. No explanation. Merge with existing — keep existing values unless new info overrides them.`;
 }
 
+async function extractContext(userMessage, botReply, existingContext, geminiApiKey) {
+  try {
+    const extractionResponse = await fetch(
+      `${GEMINI_URL}?key=${geminiApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [{ text: buildContextExtractionPrompt(userMessage, botReply, existingContext) }]
+          }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+        })
+      }
+    );
+    const extractionData = await extractionResponse.json();
+    const extractedText = extractionData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    const cleanJson = extractedText.replace(/```json|```/g, '').trim();
+    const newContext = JSON.parse(cleanJson);
+    return { ...existingContext, ...newContext };
+  } catch (err) {
+    console.error('Context extraction error:', err);
+    return existingContext;
+  }
+}
+
+async function fireWebhook(webhookUrl, sessionId, updatedContext, message, aiReply) {
+  const referenceNumber = generateReferenceNumber();
+  await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: sessionId || 'unknown',
+      referenceNumber,
+      timestamp: new Date().toISOString(),
+      message,
+      reply: aiReply,
+      name: updatedContext.name || '',
+      email: updatedContext.email || '',
+      whatsapp: updatedContext.whatsapp || '',
+      business: updatedContext.business || '',
+      industry: updatedContext.industry || '',
+      staff_count: updatedContext.staff_count || '',
+      pain_point: updatedContext.pain_point || '',
+      budget_signal: updatedContext.budget_signal || '',
+      demo_booked: updatedContext.demo_booked || false,
+      qualification_stage: updatedContext.qualification_stage || 'new',
+      has_email: !!(updatedContext.email),
+      has_whatsapp: !!(updatedContext.whatsapp),
+      is_demo_booked: !!(updatedContext.demo_booked),
+    })
+  });
+}
+
 export async function POST(request) {
   try {
     const { messages, sessionId } = await request.json();
@@ -346,7 +401,7 @@ export async function POST(request) {
       }))
       .filter(msg => msg.parts[0].text !== '');
 
-    // STEP 4: Call Gemini
+    // STEP 4: Call Gemini for bot reply
     const geminiRequestBody = {
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [
@@ -379,84 +434,45 @@ export async function POST(request) {
     const aiReply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
       || 'Sorry, I could not process that. Please try again.';
 
-    // STEP 5: Extract context from exchange async
-    const contextUpdatePromise = (async () => {
+    // STEP 5: Return reply immediately to user
+    const response = NextResponse.json({ message: aiReply });
+
+    // STEP 6: Run background tasks — extract context, save to Neon, fire webhook
+    // This runs AFTER response is returned — does not block the user
+    ;(async () => {
       try {
-        const extractionResponse = await fetch(
-          `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                role: 'user',
-                parts: [{ text: buildContextExtractionPrompt(latestMessage.content, aiReply, parsedContext) }]
-              }],
-              generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
-            })
-          }
+        // Extract context first — MUST complete before webhook fires
+        const updatedContext = await extractContext(
+          latestMessage.content,
+          aiReply,
+          parsedContext,
+          process.env.GEMINI_API_KEY
         );
-        const extractionData = await extractionResponse.json();
-        const extractedText = extractionData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-        const cleanJson = extractedText.replace(/```json|```/g, '').trim();
-        const newContext = JSON.parse(cleanJson);
-        const mergedContext = { ...parsedContext, ...newContext };
-        await upsertSessionContext(sessionId, mergedContext);
-        return mergedContext;
-      } catch (err) {
-        console.error('Context extraction error:', err);
-        return parsedContext;
-      }
-    })();
 
-    // STEP 6: Save to Neon memory async
-    const savePromise = saveMessages(
-      sessionId,
-      latestMessage.content,
-      aiReply,
-      { timestamp: new Date().toISOString() }
-    );
-
-    // STEP 7: Fire Make.com webhook with full context async
-    const makePromise = (async () => {
-      if (!process.env.MAKE_WEBHOOK_URL) return;
-      try {
-        const updatedContext = await contextUpdatePromise;
-        const referenceNumber = generateReferenceNumber();
-
-        await fetch(process.env.MAKE_WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: sessionId || 'unknown',
-            referenceNumber,
-            timestamp: new Date().toISOString(),
-            message: latestMessage.content,
-            reply: aiReply,
-            name: updatedContext.name || '',
-            email: updatedContext.email || '',
-            whatsapp: updatedContext.whatsapp || '',
-            business: updatedContext.business || '',
-            industry: updatedContext.industry || '',
-            staff_count: updatedContext.staff_count || '',
-            pain_point: updatedContext.pain_point || '',
-            budget_signal: updatedContext.budget_signal || '',
-            demo_booked: updatedContext.demo_booked || false,
-            qualification_stage: updatedContext.qualification_stage || 'new',
-            has_email: !!(updatedContext.email),
-            has_whatsapp: !!(updatedContext.whatsapp),
-            is_demo_booked: !!(updatedContext.demo_booked),
+        // Save updated context and messages to Neon in parallel
+        await Promise.all([
+          upsertSessionContext(sessionId, updatedContext),
+          saveMessages(sessionId, latestMessage.content, aiReply, {
+            timestamp: new Date().toISOString()
           })
-        });
+        ]);
+
+        // Fire webhook ONLY after context is saved — with full data
+        if (process.env.MAKE_WEBHOOK_URL) {
+          await fireWebhook(
+            process.env.MAKE_WEBHOOK_URL,
+            sessionId,
+            updatedContext,
+            latestMessage.content,
+            aiReply
+          );
+        }
       } catch (err) {
-        console.error('Make.com webhook error:', err);
+        console.error('Background processing error:', err);
       }
     })();
 
-    Promise.all([savePromise, makePromise]);
-
-    // STEP 8: Return response immediately
-    return NextResponse.json({ message: aiReply });
+    return response;
 
   } catch (error) {
     console.error('Chat route error:', error);
