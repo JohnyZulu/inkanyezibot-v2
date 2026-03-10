@@ -1,13 +1,24 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 
-// Generate a unique session ID for this browser session
 function generateSessionId() {
   return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
+function getOrCreateSessionId() {
+  try {
+    const stored = localStorage.getItem('inkanyezi_session_id');
+    if (stored) return stored;
+    const newId = generateSessionId();
+    localStorage.setItem('inkanyezi_session_id', newId);
+    return newId;
+  } catch {
+    return generateSessionId();
+  }
+}
+
 export default function EmbedPage() {
-  const [sessionId] = useState(() => generateSessionId());
+  const [sessionId] = useState(() => getOrCreateSessionId());
   const [messages, setMessages] = useState([
     { role: 'assistant', content: 'Sawubona! 👋 I\'m InkanyeziBot, your AI sales assistant from Inkanyezi Technologies.\n\n📋 By chatting, you agree to our POPIA-compliant data policy.\n\nWhat\'s your name?' }
   ]);
