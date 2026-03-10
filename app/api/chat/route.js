@@ -437,11 +437,10 @@ export async function POST(request) {
     // STEP 5: Return reply immediately to user
     const response = NextResponse.json({ message: aiReply });
 
-    // STEP 6: Run background tasks — extract context, save to Neon, fire webhook
-    // This runs AFTER response is returned — does not block the user
+    // STEP 6: Background tasks — extract context, save, conditionally fire webhook
     ;(async () => {
       try {
-        // Extract context first — MUST complete before webhook fires
+        // Extract context first — must complete before webhook fires
         const updatedContext = await extractContext(
           latestMessage.content,
           aiReply,
@@ -457,8 +456,12 @@ export async function POST(request) {
           })
         ]);
 
-        // Fire webhook ONLY after context is saved — with full data
-        if (process.env.MAKE_WEBHOOK_URL) {
+        // Fire webhook ONLY when demo is booked AND at least one contact method exists
+        if (
+          process.env.MAKE_WEBHOOK_URL &&
+          updatedContext.demo_booked === true &&
+          (updatedContext.email || updatedContext.whatsapp)
+        ) {
           await fireWebhook(
             process.env.MAKE_WEBHOOK_URL,
             sessionId,
@@ -467,6 +470,7 @@ export async function POST(request) {
             aiReply
           );
         }
+
       } catch (err) {
         console.error('Background processing error:', err);
       }
