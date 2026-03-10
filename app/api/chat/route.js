@@ -1,28 +1,15 @@
 import { NextResponse } from 'next/server';
 
-// ════════════════════════════════════════════════════════════
-// INKANYEZI AI AGENT — FULL ARCHITECTURE
-// Memory: Neon Postgres
-// Skills: qualify_lead, answer_faq, handle_objection,
-//         book_demo, send_pricing, escalate_to_human
-// Knowledge: SA market, pricing, case studies, POPIA
-// Planning: intent detection → skill routing → action
-// Guardrails: topic enforcement, human escalation
-// ════════════════════════════════════════════════════════════
-
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const NEON_URL = process.env.NEON_DATABASE_URL;
 const NEON_API_KEY = process.env.NEON_API_KEY;
 
-// ─── NEON HEADERS ─────────────────────────────────────────
 function neonHeaders() {
   return {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${NEON_API_KEY}`
   };
 }
-
-// ─── NEON MEMORY FUNCTIONS ────────────────────────────────
 
 async function getConversationHistory(sessionId) {
   if (!NEON_URL || !NEON_API_KEY) return [];
@@ -53,7 +40,6 @@ async function saveMessages(sessionId, userMessage, botReply, metadata = {}) {
   const userMsg = String(userMessage || '');
   const botMsg = String(botReply || '');
   try {
-    // Insert user message
     await fetch(NEON_URL, {
       method: 'POST',
       headers: neonHeaders(),
@@ -62,7 +48,6 @@ async function saveMessages(sessionId, userMessage, botReply, metadata = {}) {
         params: [sid, 'user', userMsg, '{}']
       })
     });
-    // Insert bot reply
     await fetch(NEON_URL, {
       method: 'POST',
       headers: neonHeaders(),
@@ -115,7 +100,11 @@ async function upsertSessionContext(sessionId, context) {
   }
 }
 
-// ─── AGENT SYSTEM PROMPT ──────────────────────────────────
+function generateReferenceNumber() {
+  const year = new Date().getFullYear();
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `INK-${year}-${rand}`;
+}
 
 function buildSystemPrompt(sessionContext, neonHistory) {
   const contextBlock = sessionContext ? `
@@ -162,7 +151,7 @@ ${historyBlock}
 YOUR IDENTITY & MISSION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - "Inkanyezi" means "star" in isiZulu — "We are the signal in the noise"
-- - Founded by Sanele Sishange, Durban, KwaZulu-Natal
+- Founded by Sanele Sishange, Durban, KwaZulu-Natal
 - IMPORTANT: When a customer tells you their name, that is THEIR name — a completely different person from Sanele Sishange the founder. Never confuse the customer's name with the founder's name. If a customer says "my name is Sanele" — they are a customer named Sanele, not the founder.
 - Mission: Make enterprise-grade AI accessible to SA SMEs left behind by expensive overseas solutions
 - Built for SA constraints: WhatsApp-first, load shedding resilient, multilingual, mobile-first, POPIA-compliant
@@ -194,6 +183,7 @@ SKILL: book_demo
 Use when: Customer shows buying intent or agrees to a demo
 Collect: name (if unknown) → WhatsApp number → email → confirm booking
 Tell them: "30-minute demo, we build a live bot for your exact industry. Sanele will reach out within 2 hours."
+After collecting email, tell the customer: "You will receive a confirmation email shortly with your reference number."
 
 SKILL: escalate_to_human
 Use when: Customer is very frustrated, asks something outside your knowledge, requests to speak to a person
@@ -261,7 +251,7 @@ Before every response, internally assess:
 CHIP SHORTCUTS — RESPOND DIRECTLY, SKIP QUALIFICATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 "Calculate my ROI" → Show ROI numbers, ask their industry
-"Show me what you've built" → Share 2 case studies, ask their industry  
+"Show me what you've built" → Share 2 case studies, ask their industry
 "Book a free demo" → Immediately start book_demo skill
 "Automate my WhatsApp" → Pitch WhatsApp AI Agent, ask business type
 
@@ -295,10 +285,6 @@ RESPONSE FORMAT
 - End every response with exactly ONE question`;
 }
 
-// ─── CONTEXT EXTRACTION ───────────────────────────────────
-// After each exchange, extract structured context from the conversation
-// to update our understanding of the customer
-
 function buildContextExtractionPrompt(userMessage, botReply, existingContext) {
   return `You are a context extraction system. Extract structured data from this conversation exchange and merge with existing context.
 
@@ -326,8 +312,6 @@ Extract and return ONLY a JSON object with these fields (only include fields whe
 Return ONLY the JSON. No markdown. No explanation. Merge with existing — keep existing values unless new info overrides them.`;
 }
 
-// ─── MAIN POST HANDLER ────────────────────────────────────
-
 export async function POST(request) {
   try {
     const { messages, sessionId } = await request.json();
@@ -341,21 +325,18 @@ export async function POST(request) {
       return NextResponse.json({ error: 'No message content found' }, { status: 400 });
     }
 
-    // ── STEP 1: Load memory from Neon ──────────────────────
+    // STEP 1: Load memory from Neon
     const [neonHistory, sessionContext] = await Promise.all([
       getConversationHistory(sessionId),
       getSessionContext(sessionId)
     ]);
 
-    // ── STEP 2: Build agent system prompt with memory ──────
-    const systemPrompt = buildSystemPrompt(
-      sessionContext ? JSON.parse(sessionContext) : null,
-      neonHistory
-    );
+    const parsedContext = sessionContext ? JSON.parse(sessionContext) : {};
 
-    // ── STEP 3: Build conversation for Gemini ──────────────
-    // Use current session messages from frontend (in-memory)
-    // but ALSO have the full Neon history in the system prompt
+    // STEP 2: Build agent system prompt with memory
+    const systemPrompt = buildSystemPrompt(parsedContext, neonHistory);
+
+    // STEP 3: Build conversation for Gemini
     const conversationHistory = messages
       .slice(0, -1)
       .filter((msg, index) => !(index === 0 && msg.role === 'assistant'))
@@ -365,7 +346,7 @@ export async function POST(request) {
       }))
       .filter(msg => msg.parts[0].text !== '');
 
-    // ── STEP 4: Call Gemini with agent prompt ──────────────
+    // STEP 4: Call Gemini
     const geminiRequestBody = {
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [
@@ -398,11 +379,9 @@ export async function POST(request) {
     const aiReply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
       || 'Sorry, I could not process that. Please try again.';
 
-    // ── STEP 5: Extract context from exchange (async) ──────
-    // Run context extraction in background — don't block response
+    // STEP 5: Extract context from exchange (async)
     const contextUpdatePromise = (async () => {
       try {
-        const existingContext = sessionContext ? JSON.parse(sessionContext) : {};
         const extractionResponse = await fetch(
           `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
           {
@@ -411,7 +390,7 @@ export async function POST(request) {
             body: JSON.stringify({
               contents: [{
                 role: 'user',
-                parts: [{ text: buildContextExtractionPrompt(latestMessage.content, aiReply, existingContext) }]
+                parts: [{ text: buildContextExtractionPrompt(latestMessage.content, aiReply, parsedContext) }]
               }],
               generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
             })
@@ -421,14 +400,16 @@ export async function POST(request) {
         const extractedText = extractionData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
         const cleanJson = extractedText.replace(/```json|```/g, '').trim();
         const newContext = JSON.parse(cleanJson);
-        const mergedContext = { ...existingContext, ...newContext };
+        const mergedContext = { ...parsedContext, ...newContext };
         await upsertSessionContext(sessionId, mergedContext);
+        return mergedContext;
       } catch (err) {
         console.error('Context extraction error:', err);
+        return parsedContext;
       }
     })();
 
-    // ── STEP 6: Save to Neon memory (async) ────────────────
+    // STEP 6: Save to Neon memory (async)
     const savePromise = saveMessages(
       sessionId,
       latestMessage.content,
@@ -436,24 +417,53 @@ export async function POST(request) {
       { timestamp: new Date().toISOString() }
     );
 
-    // ── STEP 7: Notify Make.com (fire-and-forget) ──────────
-    const makePromise = process.env.MAKE_WEBHOOK_URL
-      ? fetch(process.env.MAKE_WEBHOOK_URL, {
+    // STEP 7: Fire Make.com webhook with full context (async)
+    const makePromise = (async () => {
+      if (!process.env.MAKE_WEBHOOK_URL) return;
+      try {
+        const updatedContext = await contextUpdatePromise;
+        const referenceNumber = generateReferenceNumber();
+
+        await fetch(process.env.MAKE_WEBHOOK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            // Session info
             sessionId: sessionId || 'unknown',
+            referenceNumber,
+            timestamp: new Date().toISOString(),
+
+            // Current exchange
             message: latestMessage.content,
             reply: aiReply,
-            timestamp: new Date().toISOString()
+
+            // Full customer profile from memory
+            name: updatedContext.name || '',
+            email: updatedContext.email || '',
+            whatsapp: updatedContext.whatsapp || '',
+            business: updatedContext.business || '',
+            industry: updatedContext.industry || '',
+            staff_count: updatedContext.staff_count || '',
+            pain_point: updatedContext.pain_point || '',
+            budget_signal: updatedContext.budget_signal || '',
+            demo_booked: updatedContext.demo_booked || false,
+            qualification_stage: updatedContext.qualification_stage || 'new',
+
+            // Flags for Make.com filtering
+            has_email: !!(updatedContext.email),
+            has_whatsapp: !!(updatedContext.whatsapp),
+            is_demo_booked: !!(updatedContext.demo_booked),
           })
-        }).catch(err => console.error('Make.com webhook error:', err))
-      : Promise.resolve();
+        });
+      } catch (err) {
+        console.error('Make.com webhook error:', err);
+      }
+    })();
 
-    // Run all async operations in parallel — don't block response
-    Promise.all([contextUpdatePromise, savePromise, makePromise]);
+    // Run save in parallel — don't block response
+    Promise.all([savePromise, makePromise]);
 
-    // ── STEP 8: Return response immediately ────────────────
+    // STEP 8: Return response immediately
     return NextResponse.json({ message: aiReply });
 
   } catch (error) {
