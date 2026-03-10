@@ -123,7 +123,7 @@ ${sessionContext.whatsapp ? `WhatsApp: ${sessionContext.whatsapp}` : ''}
 ${sessionContext.email ? `Email: ${sessionContext.email}` : ''}
 ${sessionContext.qualification_stage ? `Qualification stage: ${sessionContext.qualification_stage}` : ''}
 
-IMPORTANT: You already know the above — DO NOT ask for information you already have. 
+IMPORTANT: You already know the above — DO NOT ask for information you already have.
 Pick up the conversation naturally using this context.
 ` : '';
 
@@ -379,7 +379,7 @@ export async function POST(request) {
     const aiReply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
       || 'Sorry, I could not process that. Please try again.';
 
-    // STEP 5: Extract context from exchange (async)
+    // STEP 5: Extract context from exchange async
     const contextUpdatePromise = (async () => {
       try {
         const extractionResponse = await fetch(
@@ -409,7 +409,7 @@ export async function POST(request) {
       }
     })();
 
-    // STEP 6: Save to Neon memory (async)
+    // STEP 6: Save to Neon memory async
     const savePromise = saveMessages(
       sessionId,
       latestMessage.content,
@@ -417,7 +417,7 @@ export async function POST(request) {
       { timestamp: new Date().toISOString() }
     );
 
-    // STEP 7: Fire Make.com webhook with full context (async)
+    // STEP 7: Fire Make.com webhook with full context async
     const makePromise = (async () => {
       if (!process.env.MAKE_WEBHOOK_URL) return;
       try {
@@ -428,16 +428,11 @@ export async function POST(request) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            // Session info
             sessionId: sessionId || 'unknown',
             referenceNumber,
             timestamp: new Date().toISOString(),
-
-            // Current exchange
             message: latestMessage.content,
             reply: aiReply,
-
-            // Full customer profile from memory
             name: updatedContext.name || '',
             email: updatedContext.email || '',
             whatsapp: updatedContext.whatsapp || '',
@@ -448,8 +443,6 @@ export async function POST(request) {
             budget_signal: updatedContext.budget_signal || '',
             demo_booked: updatedContext.demo_booked || false,
             qualification_stage: updatedContext.qualification_stage || 'new',
-
-            // Flags for Make.com filtering
             has_email: !!(updatedContext.email),
             has_whatsapp: !!(updatedContext.whatsapp),
             is_demo_booked: !!(updatedContext.demo_booked),
@@ -460,7 +453,6 @@ export async function POST(request) {
       }
     })();
 
-    // Run save in parallel — don't block response
     Promise.all([savePromise, makePromise]);
 
     // STEP 8: Return response immediately
