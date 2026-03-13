@@ -100,10 +100,71 @@ async function upsertSessionContext(sessionId, context) {
   }
 }
 
-function generateReferenceNumber() {
+// ── INDUSTRY CODE MAPPING ──────────────────────────────────────────────────
+function getIndustryCode(industry) {
+  if (!industry) return 'GEN';
+  const map = {
+    // Trade & Field Services
+    plumbing: 'PLB', plumber: 'PLB', plumbkor: 'PLB',
+    electrical: 'ELC', electrician: 'ELC', electric: 'ELC',
+    construction: 'CON', builder: 'CON', building: 'CON', contractor: 'CON',
+    hvac: 'HVC', aircon: 'HVC', 'air conditioning': 'HVC',
+    cleaning: 'CLN', cleaner: 'CLN',
+    security: 'SEC', guard: 'SEC',
+    // Healthcare
+    healthcare: 'MED', medical: 'MED', health: 'MED',
+    clinic: 'MED', doctor: 'MED', pharmacy: 'MED', dental: 'MED',
+    // Property & Real Estate
+    property: 'REA', 'real estate': 'REA', realtor: 'REA',
+    estate: 'REA', rental: 'REA', letting: 'REA',
+    // Retail & FMCG
+    retail: 'RET', shop: 'RET', store: 'RET', supermarket: 'RET',
+    wholesale: 'RET', supplier: 'RET',
+    // Transport & Logistics
+    transport: 'TRN', logistics: 'TRN', courier: 'TRN',
+    delivery: 'TRN', freight: 'TRN', fleet: 'TRN',
+    // Hospitality & Food
+    hospitality: 'HOS', restaurant: 'HOS', hotel: 'HOS',
+    catering: 'HOS', cafe: 'HOS', food: 'HOS',
+    // Professional Services
+    professional: 'PRO', legal: 'PRO', lawyer: 'PRO',
+    accounting: 'PRO', accountant: 'PRO', finance: 'PRO',
+    consulting: 'PRO', consultant: 'PRO', advisory: 'PRO',
+    // Education & Training
+    education: 'EDU', school: 'EDU', training: 'EDU',
+    university: 'EDU', college: 'EDU', tutoring: 'EDU',
+    // Technology
+    technology: 'TEC', software: 'TEC', it: 'TEC',
+    tech: 'TEC', digital: 'TEC', saas: 'TEC',
+    // Manufacturing
+    manufacturing: 'MFG', factory: 'MFG', production: 'MFG',
+    // Agriculture
+    agriculture: 'AGR', farming: 'AGR', farm: 'AGR',
+    // Automotive
+    automotive: 'AUT', car: 'AUT', vehicle: 'AUT',
+    garage: 'AUT', mechanic: 'AUT', motor: 'AUT',
+    // Insurance & Financial
+    insurance: 'INS', broker: 'INS', assurance: 'INS',
+    // Marketing & Media
+    marketing: 'MKT', media: 'MKT', advertising: 'MKT',
+    agency: 'MKT', creative: 'MKT',
+  };
+  const key = industry.toLowerCase().trim();
+  for (const [term, code] of Object.entries(map)) {
+    if (key.includes(term)) return code;
+  }
+  return 'GEN';
+}
+
+// ── REFERENCE NUMBER GENERATOR ─────────────────────────────────────────────
+// Format: INK-[INDUSTRY]-[YEAR]-[RAND4]
+// Example: INK-PLB-2026-4827 (Plumbing lead, 2026)
+// Once generated for a session it is PRESERVED — never regenerated
+function generateReferenceNumber(industry) {
   const year = new Date().getFullYear();
   const rand = Math.floor(1000 + Math.random() * 9000);
-  return `INK-${year}-${rand}`;
+  const code = getIndustryCode(industry);
+  return `INK-${code}-${year}-${rand}`;
 }
 
 function buildSystemPrompt(sessionContext, neonHistory) {
@@ -121,6 +182,7 @@ ${sessionContext.budget_signal ? `Budget signal: ${sessionContext.budget_signal}
 ${sessionContext.demo_booked ? `Demo booked: YES` : ''}
 ${sessionContext.whatsapp ? `WhatsApp: ${sessionContext.whatsapp}` : ''}
 ${sessionContext.email ? `Email: ${sessionContext.email}` : ''}
+${sessionContext.referenceNumber ? `Reference number: ${sessionContext.referenceNumber}` : ''}
 ${sessionContext.qualification_stage ? `Qualification stage: ${sessionContext.qualification_stage}` : ''}
 
 IMPORTANT: You already know the above — DO NOT ask for information you already have.
@@ -152,7 +214,7 @@ YOUR IDENTITY & MISSION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - "Inkanyezi" means "star" in isiZulu — "We are the signal in the noise"
 - Founded by Sanele Sishange, Durban, KwaZulu-Natal
-- IMPORTANT: When a customer tells you their name, that is THEIR name — a completely different person from Sanele Sishange the founder. Never confuse the customer's name with the founder's name. If a customer says "my name is Sanele" — they are a customer named Sanele, not the founder.
+- IMPORTANT: When a customer tells you their name, that is THEIR name — a completely different person from Sanele Sishange the founder. Never confuse the customer's name with the founder's name.
 - Mission: Make enterprise-grade AI accessible to SA SMEs left behind by expensive overseas solutions
 - Built for SA constraints: WhatsApp-first, load shedding resilient, multilingual, mobile-first, POPIA-compliant
 - Local pricing in Rand, B-BBEE positioning, deep SA market understanding
@@ -183,7 +245,7 @@ SKILL: book_demo
 Use when: Customer shows buying intent or agrees to a demo
 Collect: name (if unknown) → WhatsApp number → email → confirm booking
 Tell them: "30-minute demo, we build a live bot for your exact industry. Sanele will reach out within 2 hours."
-After collecting email, tell the customer: "You will receive a confirmation email shortly with your reference number."
+After collecting email, tell the customer: "You will receive a confirmation email shortly with your stellar coordinate reference number."
 
 SKILL: escalate_to_human
 Use when: Customer is very frustrated, asks something outside your knowledge, requests to speak to a person
@@ -340,7 +402,9 @@ async function extractContext(userMessage, botReply, existingContext, geminiApiK
 }
 
 async function fireWebhook(webhookUrl, sessionId, updatedContext, message, aiReply) {
-  const referenceNumber = generateReferenceNumber();
+  // Reference number is PRESERVED from context — never regenerated for same session
+  const referenceNumber = updatedContext.referenceNumber;
+
   await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -437,16 +501,22 @@ export async function POST(request) {
     // STEP 5: Return reply immediately to user
     const response = NextResponse.json({ message: aiReply });
 
-    // STEP 6: Background tasks — extract context, save, conditionally fire webhook
+    // STEP 6: Background tasks — extract context, assign reference number, save, fire webhook
     ;(async () => {
       try {
-        // Extract context first — must complete before webhook fires
+        // Extract updated context from this exchange
         const updatedContext = await extractContext(
           latestMessage.content,
           aiReply,
           parsedContext,
           process.env.GEMINI_API_KEY
         );
+
+        // ASSIGN REFERENCE NUMBER — generated once per session, preserved forever
+        // Uses industry code from context: INK-PLB-2026-4827 format
+        if (!updatedContext.referenceNumber) {
+          updatedContext.referenceNumber = generateReferenceNumber(updatedContext.industry);
+        }
 
         // Save updated context and messages to Neon in parallel
         await Promise.all([
