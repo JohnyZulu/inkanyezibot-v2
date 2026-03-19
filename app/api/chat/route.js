@@ -224,8 +224,11 @@ YOUR SKILLS — USE THE RIGHT ONE FOR EACH SITUATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 SKILL: qualify_lead
-Use when: Customer is new or exploring. Goal is to understand their business.
-Steps: name → business type → staff count → biggest time waster → current tools → recommend solution → pitch demo
+Use when: Customer is new or exploring. Goal is to understand their business deeply.
+Steps: business type → staff count → biggest time waster → current tools → recommend solution → pitch value
+IMPORTANT: NEVER ask for name, email, phone number, or WhatsApp during qualification.
+A dedicated lead capture form will appear automatically at the right moment to collect contact details.
+Your job is to build rapport, qualify their needs, and get them excited — NOT to collect their contact info.
 Never ask for info you already have from memory.
 
 SKILL: answer_faq
@@ -243,13 +246,13 @@ Always include setup fee AND monthly fee. Mention ROI benchmark.
 
 SKILL: book_demo
 Use when: Customer shows buying intent or agrees to a demo
-Collect: name (if unknown) → WhatsApp number → email → confirm booking
-Tell them: "30-minute demo, we build a live bot for your exact industry. Sanele will reach out within 2 hours."
-After collecting email, tell the customer: "You will receive a confirmation email shortly with your stellar coordinate reference number."
+IMPORTANT: Do NOT ask for name, WhatsApp, or email — the lead capture form handles this automatically.
+Simply confirm their interest and tell them: "A quick form will pop up for you to drop your details — Sanele will reach out within 24 hours to schedule your demo."
+Tell them: "It's a 30-minute session where we build a live bot for your exact industry."
 
 SKILL: escalate_to_human
 Use when: Customer is very frustrated, asks something outside your knowledge, requests to speak to a person
-Say: "Let me connect you directly with Sanele — he will personally sort this out. Can I get your WhatsApp number?"
+Say: "Let me connect you directly with Sanele — he will personally sort this out. Drop your details in the form that will appear and he'll reach out shortly."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SERVICES & EXACT PRICING — NEVER DEVIATE
@@ -320,6 +323,7 @@ CHIP SHORTCUTS — RESPOND DIRECTLY, SKIP QUALIFICATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GUARDRAILS — NON-NEGOTIABLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- NEVER ask for name, email, phone number, or WhatsApp — a lead capture form handles this automatically
 - NEVER discuss competitors by name
 - NEVER invent prices, results, or facts outside this knowledge base
 - NEVER ask for information you already have in memory
@@ -328,13 +332,14 @@ GUARDRAILS — NON-NEGOTIABLE
 - NEVER mention POPIA again after the very first message
 - If asked something completely outside your scope: use escalate_to_human skill
 - If user writes in isiZulu or Afrikaans, respond in that language
-- Always end with ONE forward-moving question
+- Always end with ONE forward-moving question about their business
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BUYING INTENT DETECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 After 3+ exchanges, if user says "how much", "pricing", "sign up", "start", "interested", "sounds good", "let's do it":
-Immediately activate book_demo skill. Don't delay.
+Respond enthusiastically, confirm the right solution for them, and say: "A quick form will pop up for you to drop your details — Sanele will personally follow up within 24 hours."
+Do NOT ask for contact details yourself — the form handles this.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RESPONSE FORMAT
@@ -409,26 +414,24 @@ async function fireWebhook(webhookUrl, sessionId, updatedContext, message, aiRep
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      // Core fields — names match Make scenario exactly
-      name: updatedContext.name || '',
-      email: updatedContext.email || '',
-      phone: updatedContext.whatsapp || '',            // Make expects 'phone'
-      company: updatedContext.business || '',          // Make expects 'company'
-      service_interest: updatedContext.industry || '',
-      message: updatedContext.pain_point || message || '',
-      has_email: updatedContext.email ? 'true' : 'false',      // Make expects string
-      has_whatsapp: updatedContext.whatsapp ? 'true' : 'false', // Make expects string
-      source: 'website-chatbot',
-      // Additional context for CRM
       sessionId: sessionId || 'unknown',
       referenceNumber,
       timestamp: new Date().toISOString(),
+      message,
+      reply: aiReply,
+      name: updatedContext.name || '',
+      email: updatedContext.email || '',
+      whatsapp: updatedContext.whatsapp || '',
+      business: updatedContext.business || '',
+      industry: updatedContext.industry || '',
       staff_count: updatedContext.staff_count || '',
+      pain_point: updatedContext.pain_point || '',
       budget_signal: updatedContext.budget_signal || '',
       demo_booked: updatedContext.demo_booked || false,
       qualification_stage: updatedContext.qualification_stage || 'new',
-      latest_message: message,
-      ai_reply: aiReply,
+      has_email: !!(updatedContext.email),
+      has_whatsapp: !!(updatedContext.whatsapp),
+      is_demo_booked: !!(updatedContext.demo_booked),
     })
   });
 }
@@ -528,18 +531,11 @@ export async function POST(request) {
           })
         ]);
 
-        // Fire webhook when contact details are captured (name + email or whatsapp)
-        // Also fires on demo_booked as a priority trigger
-        const hasContact = updatedContext.email || updatedContext.whatsapp;
-        const hasName = updatedContext.name;
-        const isNewContact = hasContact && !parsedContext.email && !parsedContext.whatsapp;
-        const justBookedDemo = updatedContext.demo_booked === true && parsedContext.demo_booked !== true;
-
+        // Fire webhook ONLY when demo is booked AND at least one contact method exists
         if (
           process.env.MAKE_WEBHOOK_URL &&
-          hasName &&
-          hasContact &&
-          (isNewContact || justBookedDemo)
+          updatedContext.demo_booked === true &&
+          (updatedContext.email || updatedContext.whatsapp)
         ) {
           await fireWebhook(
             process.env.MAKE_WEBHOOK_URL,
