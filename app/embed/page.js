@@ -1,75 +1,464 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
-function generateSessionId() {
-  return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-}
+// ── BRAND TOKENS ──────────────────────────────────────────────────────────────
+const BRAND = {
+  midnight: '#0A1628',
+  midnightDeep: '#060E1A',
+  gold: '#F4B942',
+  orange: '#FF6B35',
+  saGreen: '#007A4D',
+  saGold: '#FFB612',
+  saRed: '#DE3831',
+  saBlue: '#002395',
+};
 
-function getOrCreateSessionId() {
-  try {
-    const stored = localStorage.getItem('inkanyezi_session_id');
-    if (stored) return stored;
-    const newId = generateSessionId();
-    localStorage.setItem('inkanyezi_session_id', newId);
-    return newId;
-  } catch {
-    return generateSessionId();
+// ── TRIGGER SIGNAL WEIGHTS ────────────────────────────────────────────────────
+// 🔮 Move to Vercel Edge Config for remote tuning without redeployment
+const SIGNALS = {
+  QUALIFICATION_STAGES: { interested: 30, ready: 60, exploring: 10, objecting: 5, new: 0 },
+  HAS_PAIN_POINT: 20,
+  HAS_INDUSTRY: 15,
+  HAS_STAFF_COUNT: 10,
+  HAS_BUDGET_SIGNAL: { high: 25, medium: 15, low: 5 },
+  MESSAGE_COUNT_BONUS: 5,
+  DEMO_BOOKED: 100,
+  EXPLICIT_REQUEST: 80,
+};
+const TRIGGER_THRESHOLD = 45;
+const MIN_MESSAGES = 3;
+
+const INTEREST_PHRASES = [
+  'get in touch', 'contact', 'speak to someone', 'call me', 'reach out',
+  'book a demo', 'schedule', 'sign up', 'get started',
+  'how much', 'pricing', 'cost', 'quote', 'proposal',
+  'want to know more', 'sounds good', "let's do it",
+  'ready to', 'can you help', 'would you help',
+];
+
+const INDUSTRIES = [
+  { value: 'plumbing', label: '🔧 Plumbing & Trade' },
+  { value: 'electrical', label: '⚡ Electrical & HVAC' },
+  { value: 'construction', label: '🏗️ Construction' },
+  { value: 'healthcare', label: '🏥 Healthcare' },
+  { value: 'property', label: '🏘️ Property & Real Estate' },
+  { value: 'retail', label: '🛒 Retail & Wholesale' },
+  { value: 'transport', label: '🚛 Transport & Logistics' },
+  { value: 'hospitality', label: '🍽️ Hospitality & Food' },
+  { value: 'professional', label: '💼 Professional Services' },
+  { value: 'education', label: '📚 Education & Training' },
+  { value: 'technology', label: '💻 Technology' },
+  { value: 'other', label: '◎ Other' },
+];
+
+const SERVICES = [
+  { value: 'automate', label: '⚙️ Automate — Business Automation' },
+  { value: 'learn', label: '🎓 Learn — AI Training' },
+  { value: 'grow', label: '📈 Grow — AI Strategy' },
+  { value: 'unsure', label: '✦ Just exploring' },
+];
+
+// ── TRIGGER SCORE CALCULATOR ──────────────────────────────────────────────────
+function calculateTriggerScore(sessionContext, userMessageCount, lastUserMessage) {
+  let score = 0;
+  const reasons = [];
+  if (!sessionContext) return { score: 0, reasons: [], shouldShow: false };
+
+  const stage = sessionContext.qualification_stage || 'new';
+  const stageScore = SIGNALS.QUALIFICATION_STAGES[stage] || 0;
+  if (stageScore > 0) { score += stageScore; reasons.push(`stage:${stage}`); }
+  if (sessionContext.pain_point) { score += SIGNALS.HAS_PAIN_POINT; reasons.push('pain_point'); }
+  if (sessionContext.industry) { score += SIGNALS.HAS_INDUSTRY; reasons.push('industry'); }
+  if (sessionContext.staff_count) { score += SIGNALS.HAS_STAFF_COUNT; reasons.push('staff_count'); }
+  if (sessionContext.budget_signal) {
+    const s = SIGNALS.HAS_BUDGET_SIGNAL[sessionContext.budget_signal] || 0;
+    score += s; reasons.push(`budget:${sessionContext.budget_signal}`);
   }
+  if (userMessageCount > 4) {
+    const bonus = Math.floor((userMessageCount - 4) / 3) * SIGNALS.MESSAGE_COUNT_BONUS;
+    score += bonus; if (bonus > 0) reasons.push(`depth:${bonus}`);
+  }
+  if (sessionContext.demo_booked) { score += SIGNALS.DEMO_BOOKED; reasons.push('demo_booked'); }
+  if (lastUserMessage) {
+    const lower = lastUserMessage.toLowerCase();
+    const matched = INTEREST_PHRASES.find(p => lower.includes(p));
+    if (matched) { score += SIGNALS.EXPLICIT_REQUEST; reasons.push(`phrase:${matched}`); }
+  }
+
+  return { score, reasons, shouldShow: score >= TRIGGER_THRESHOLD && userMessageCount >= MIN_MESSAGES };
 }
 
-export default function EmbedPage() {
-  const [sessionId] = useState(() => getOrCreateSessionId());
+// ── MINI STAR CANVAS ──────────────────────────────────────────────────────────
+function MiniStars() {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+    let animId;
+    const stars = Array.from({ length: 35 }, () => ({
+      x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+      r: Math.random() * 1.1 + 0.2, pulse: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.02 + 0.005, gold: Math.random() > 0.82,
+    }));
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      stars.forEach(s => {
+        s.pulse += s.speed;
+        const op = 0.25 + 0.4 * Math.sin(s.pulse);
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = s.gold ? `rgba(244,185,66,${op})` : `rgba(255,255,255,${op * 0.5})`;
+        ctx.fill();
+      });
+      animId = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(animId);
+  }, []);
+  return <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: '10px' }} />;
+}
+
+// ── HERITAGE STRIP ────────────────────────────────────────────────────────────
+function HeritageStrip({ style }) {
+  return (
+    <div style={{ display: 'flex', gap: 3, alignItems: 'center', ...style }}>
+      {[BRAND.saGreen, BRAND.saGold, BRAND.saRed, BRAND.saBlue, '#ffffff'].map((c, i) => (
+        <div key={i} style={{ width: i === 2 ? 14 : 9, height: 2.5, background: c, borderRadius: 2, opacity: 0.6 }} />
+      ))}
+    </div>
+  );
+}
+
+// ── LEAD FORM FIELD ───────────────────────────────────────────────────────────
+function FormField({ label, name, type = 'text', placeholder, value, onChange, required }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <label style={{
+        display: 'block', fontSize: '0.58rem', letterSpacing: '0.12em',
+        textTransform: 'uppercase', fontFamily: "'Space Mono', monospace",
+        color: focused ? BRAND.gold : 'rgba(255,255,255,0.38)',
+        marginBottom: '0.25rem', transition: 'color 0.2s',
+      }}>
+        {label}{required && <span style={{ color: BRAND.orange }}> *</span>}
+      </label>
+      <input
+        type={type} name={name} value={value} onChange={onChange}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        placeholder={placeholder} required={required}
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          background: focused ? 'rgba(244,185,66,0.04)' : 'rgba(255,255,255,0.03)',
+          border: `1px solid ${focused ? 'rgba(244,185,66,0.4)' : 'rgba(255,255,255,0.1)'}`,
+          borderRadius: '5px', padding: '0.5rem 0.65rem',
+          color: '#fff', fontSize: '0.8rem',
+          fontFamily: "'DM Sans', sans-serif",
+          outline: 'none', transition: 'all 0.2s',
+        }}
+      />
+    </div>
+  );
+}
+
+function FormSelect({ label, name, value, onChange, options, required }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+      <label style={{
+        display: 'block', fontSize: '0.58rem', letterSpacing: '0.12em',
+        textTransform: 'uppercase', fontFamily: "'Space Mono', monospace",
+        color: focused ? BRAND.gold : 'rgba(255,255,255,0.38)',
+        marginBottom: '0.25rem', transition: 'color 0.2s',
+      }}>
+        {label}{required && <span style={{ color: BRAND.orange }}> *</span>}
+      </label>
+      <div style={{ position: 'relative' }}>
+        <select
+          name={name} value={value} onChange={onChange}
+          onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+          required={required}
+          style={{
+            width: '100%', appearance: 'none', boxSizing: 'border-box',
+            background: 'rgba(10,22,40,0.95)',
+            border: `1px solid ${focused ? 'rgba(244,185,66,0.4)' : 'rgba(255,255,255,0.1)'}`,
+            borderRadius: '5px', padding: '0.5rem 1.8rem 0.5rem 0.65rem',
+            color: value ? '#fff' : 'rgba(255,255,255,0.28)',
+            fontSize: '0.8rem', fontFamily: "'DM Sans', sans-serif",
+            outline: 'none', cursor: 'pointer', transition: 'all 0.2s',
+          }}
+        >
+          <option value="" disabled style={{ background: '#0A1628' }}>Choose...</option>
+          {options.map(o => (
+            <option key={o.value} value={o.value} style={{ background: '#0A1628', color: '#fff' }}>{o.label}</option>
+          ))}
+        </select>
+        <span style={{ position: 'absolute', right: '0.55rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.55rem', color: 'rgba(255,255,255,0.3)', pointerEvents: 'none' }}>▼</span>
+      </div>
+    </div>
+  );
+}
+
+// ── INLINE LEAD CAPTURE FORM CARD ─────────────────────────────────────────────
+function ChatLeadForm({ onSubmit, onDismiss, sessionContext = {}, submitting = false }) {
+  const [submitted, setSubmitted] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [form, setForm] = useState({
+    name: sessionContext?.name || '',
+    email: sessionContext?.email || '',
+    phone: sessionContext?.whatsapp || '',
+    company: sessionContext?.business || '',
+    industry: sessionContext?.industry || '',
+    service_interest: '',
+    message: sessionContext?.pain_point || '',
+  });
+
+  // Re-fill as bot learns more context mid-conversation
+  useEffect(() => {
+    setForm(f => ({
+      ...f,
+      name: f.name || sessionContext?.name || '',
+      email: f.email || sessionContext?.email || '',
+      phone: f.phone || sessionContext?.whatsapp || '',
+      company: f.company || sessionContext?.business || '',
+      industry: f.industry || sessionContext?.industry || '',
+      message: f.message || sessionContext?.pain_point || '',
+    }));
+  }, [sessionContext]);
+
+  useEffect(() => { setTimeout(() => setMounted(true), 80); }, []);
+
+  const handleChange = (e) => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!consent) return;
+    const result = await onSubmit?.(form);
+    if (result?.success !== false) setSubmitted(true);
+  };
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&family=Syne:wght@700;800&display=swap');
+        @keyframes inkSlideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes inkShimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
+        @keyframes inkSpin { to { transform: rotate(360deg); } }
+        @keyframes inkPulse { 0%,100%{box-shadow:0 0 0 0 rgba(244,185,66,0.35)} 50%{box-shadow:0 0 0 5px rgba(244,185,66,0)} }
+        .ink-form-row { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; }
+        @media(max-width:360px){.ink-form-row{grid-template-columns:1fr;}}
+        .ink-input::placeholder{color:rgba(255,255,255,0.2)!important;}
+        .ink-input:-webkit-autofill{-webkit-box-shadow:0 0 0 30px #0D1E35 inset!important;-webkit-text-fill-color:#fff!important;}
+      `}</style>
+
+      {/* Appears as a bot message */}
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+        opacity: mounted ? 1 : 0, transform: mounted ? 'translateY(0)' : 'translateY(10px)',
+        transition: 'opacity 0.4s ease, transform 0.4s ease',
+      }}>
+        {/* Bot avatar row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+          <div style={{
+            width: 22, height: 22, borderRadius: '50%',
+            background: `linear-gradient(135deg, ${BRAND.gold}, ${BRAND.orange})`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '0.65rem', color: BRAND.midnight,
+            animation: 'inkPulse 2.5s ease infinite',
+          }}>✦</div>
+          <span style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)', fontFamily: "'Space Mono', monospace" }}>InkanyeziBot</span>
+        </div>
+
+        {/* CARD */}
+        <div style={{
+          width: '100%',
+          background: 'linear-gradient(145deg, rgba(10,22,40,0.97), rgba(6,14,26,0.99))',
+          border: '1px solid rgba(244,185,66,0.15)',
+          borderRadius: '12px', borderTopLeftRadius: '3px',
+          overflow: 'hidden', position: 'relative',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
+          animation: 'inkSlideUp 0.4s ease forwards',
+        }}>
+          <MiniStars />
+
+          {/* Shimmer bar */}
+          <div style={{
+            height: '2px',
+            background: `linear-gradient(90deg, transparent, ${BRAND.gold}, ${BRAND.orange}, ${BRAND.gold}, transparent)`,
+            backgroundSize: '200% 100%', animation: 'inkShimmer 3s linear infinite',
+          }} />
+
+          {/* Dismiss */}
+          {onDismiss && !submitted && (
+            <button onClick={onDismiss} style={{
+              position: 'absolute', top: '0.5rem', right: '0.5rem',
+              background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '3px', padding: '1px 5px',
+              color: 'rgba(255,255,255,0.3)', fontSize: '0.6rem',
+              cursor: 'pointer', zIndex: 10, fontFamily: "'Space Mono', monospace",
+            }}>✕</button>
+          )}
+
+          <div style={{ padding: '0.85rem 0.95rem 0.95rem', position: 'relative', zIndex: 1 }}>
+            {submitted ? (
+              /* SUCCESS */
+              <div style={{ textAlign: 'center', padding: '0.5rem 0' }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: '50%', margin: '0 auto 0.6rem',
+                  background: 'rgba(244,185,66,0.1)', border: '1px solid rgba(244,185,66,0.3)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem',
+                }}>✦</div>
+                <p style={{ fontFamily: "'Syne', sans-serif", fontSize: '0.95rem', fontWeight: 800, color: '#fff', margin: '0 0 0.3rem' }}>
+                  Signal received,{' '}
+                  <span style={{ background: `linear-gradient(90deg, ${BRAND.gold}, ${BRAND.orange})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                    {form.name?.split(' ')[0] || 'friend'}
+                  </span>
+                </p>
+                <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', margin: '0 0 0.65rem', fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>
+                  {form.company ? `We'll reach out to ${form.company} within 24 hours.` : "Sanele will be in touch within 24 hours."}
+                </p>
+                <HeritageStrip style={{ justifyContent: 'center' }} />
+              </div>
+            ) : (
+              /* FORM */
+              <>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ fontSize: '0.55rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: BRAND.gold, fontFamily: "'Space Mono', monospace", marginBottom: '0.25rem' }}>
+                    ✦ Inkanyezi Technologies
+                  </div>
+                  <h3 style={{ margin: 0, fontFamily: "'Syne', sans-serif", fontSize: '0.95rem', fontWeight: 800, color: '#fff', lineHeight: 1.2 }}>
+                    Let's make this{' '}
+                    <span style={{ background: `linear-gradient(90deg, ${BRAND.gold}, ${BRAND.orange})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>official</span>
+                  </h3>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.72rem', color: 'rgba(255,255,255,0.38)', lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif" }}>
+                    Share your details — Sanele will personally follow up within 24 hours.
+                  </p>
+                  <HeritageStrip style={{ marginTop: '0.5rem' }} />
+                </div>
+
+                <form onSubmit={handleSubmit} className="ink-input">
+                  <div className="ink-form-row" style={{ marginBottom: '0.5rem' }}>
+                    <FormField label="Your Name" name="name" placeholder="e.g. Sipho" value={form.name} onChange={handleChange} required />
+                    <FormField label="Business" name="company" placeholder="e.g. Dlamini Co." value={form.company} onChange={handleChange} />
+                  </div>
+                  <div className="ink-form-row" style={{ marginBottom: '0.5rem' }}>
+                    <FormField label="Email" name="email" type="email" placeholder="you@business.co.za" value={form.email} onChange={handleChange} required />
+                    <FormField label="WhatsApp" name="phone" type="tel" placeholder="+27 82 ..." value={form.phone} onChange={handleChange} />
+                  </div>
+                  <div className="ink-form-row" style={{ marginBottom: '0.5rem' }}>
+                    <FormSelect label="Industry" name="industry" value={form.industry} onChange={handleChange} options={INDUSTRIES} required />
+                    <FormSelect label="How we help" name="service_interest" value={form.service_interest} onChange={handleChange} options={SERVICES} required />
+                  </div>
+
+                  {/* Consent */}
+                  <label style={{ display: 'flex', gap: '0.5rem', cursor: 'pointer', alignItems: 'flex-start', marginBottom: '0.65rem' }}>
+                    <div
+                      onClick={() => setConsent(c => !c)}
+                      style={{
+                        width: 14, height: 14, flexShrink: 0, marginTop: 2,
+                        border: `1px solid ${consent ? BRAND.gold : 'rgba(255,255,255,0.2)'}`,
+                        borderRadius: '2px', background: consent ? 'rgba(244,185,66,0.12)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.2s', cursor: 'pointer',
+                      }}
+                    >
+                      {consent && <span style={{ color: BRAND.gold, fontSize: '9px', lineHeight: 1 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif" }}>
+                      I consent to Inkanyezi Technologies contacting me per{' '}
+                      <span style={{ color: BRAND.gold }}>POPIA</span>.{' '}
+                      <span style={{ color: BRAND.orange }}>*</span>
+                    </span>
+                  </label>
+
+                  {/* Submit */}
+                  <button
+                    type="submit"
+                    disabled={submitting || !consent}
+                    style={{
+                      width: '100%', padding: '0.6rem',
+                      background: submitting || !consent ? 'rgba(244,185,66,0.1)' : `linear-gradient(90deg, ${BRAND.gold}, ${BRAND.orange})`,
+                      border: 'none', borderRadius: '5px',
+                      color: submitting || !consent ? 'rgba(255,255,255,0.25)' : BRAND.midnight,
+                      fontFamily: "'Space Mono', monospace", fontSize: '0.65rem',
+                      fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
+                      cursor: submitting || !consent ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.25s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                    }}
+                  >
+                    {submitting ? (
+                      <>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.2)', borderTop: '2px solid rgba(255,255,255,0.7)', display: 'inline-block', animation: 'inkSpin 0.7s linear infinite' }} />
+                        Transmitting...
+                      </>
+                    ) : '✦ Send My Details'}
+                  </button>
+
+                  <p style={{ textAlign: 'center', fontSize: '0.58rem', color: 'rgba(255,255,255,0.18)', margin: '0.5rem 0 0', fontFamily: "'Space Mono', monospace" }}>
+                    Durban, KZN 🇿🇦 · We are the signal in the noise.
+                  </p>
+                </form>
+              </>
+            )}
+          </div>
+          <div style={{ height: '1px', background: 'linear-gradient(90deg, transparent, rgba(244,185,66,0.12), transparent)' }} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── MAIN PAGE ─────────────────────────────────────────────────────────────────
+export default function Home() {
+  const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
-    { role: 'assistant', content: 'Sawubona! 👋 I\'m InkanyeziBot, your AI sales assistant from Inkanyezi Technologies.\n\n📋 By chatting, you agree to our POPIA-compliant data policy.\n\nWhat\'s your name?' }
+    { role: 'assistant', content: "Sawubona! 👋 I'm InkanyeziBot — your AI guide to automation for South African businesses.\n\nBy chatting, you agree to our POPIA-compliant data policy.\n\nWhat does your business do, and what's the biggest challenge slowing you down right now?" }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [chipsVisible, setChipsVisible] = useState(true);
-  const [stars, setStars] = useState([]);
-  const [shootingStars, setShootingStars] = useState([]);
-  const [doorsOpen, setDoorsOpen] = useState(false);
-  const [doorsAnimating, setDoorsAnimating] = useState(true);
+  const [sessionContext, setSessionContext] = useState(null);
+  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+
+  // ── Lead capture state ──────────────────────────────────────────────────────
+  const [showLeadForm, setShowLeadForm] = useState(false);
+  const [leadFormSubmitted, setLeadFormSubmitted] = useState(false);
+  const [leadSubmitting, setLeadSubmitting] = useState(false);
+  const hasTriggered = useRef(false);
+
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
-    const generatedStars = Array.from({ length: 80 }, (_, i) => ({
-      id: i,
-      x: Math.random() * 100,
-      y: Math.random() * 100,
-      size: Math.random() * 2 + 0.5,
-      duration: Math.random() * 3 + 2,
-    }));
-    setStars(generatedStars);
-    const timer = setTimeout(() => {
-      setDoorsOpen(true);
-      setTimeout(() => setDoorsAnimating(false), 2800);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, showLeadForm]);
 
-  const triggerShootingStar = () => {
-    const newStar = { id: Date.now(), startX: Math.random() * 50, startY: Math.random() * 50 };
-    setShootingStars(prev => [...prev, newStar]);
-    setTimeout(() => setShootingStars(prev => prev.filter(s => s.id !== newStar.id)), 1000);
-  };
+  // ── Trigger evaluation after every bot reply ────────────────────────────────
+  useEffect(() => {
+    if (hasTriggered.current || leadFormSubmitted || !sessionContext) return;
+    const userMessages = messages.filter(m => m.role === 'user');
+    const lastUserMsg = userMessages[userMessages.length - 1]?.content || '';
+    const { shouldShow } = calculateTriggerScore(sessionContext, userMessages.length, lastUserMsg);
+    if (shouldShow) {
+      hasTriggered.current = true;
+      // Delay slightly so it appears after the bot's reply animation
+      setTimeout(() => setShowLeadForm(true), 1200);
+    }
+  }, [messages, sessionContext, leadFormSubmitted]);
 
   const formatMessage = (text) => {
     if (!text) return '';
-    return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br/>');
   };
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
-    triggerShootingStar();
     const userMessage = { role: 'user', content: input };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput('');
-    setChipsVisible(false);
     setIsLoading(true);
     try {
       const response = await fetch('/api/chat', {
@@ -79,6 +468,11 @@ export default function EmbedPage() {
       });
       const data = await response.json();
       setMessages([...newMessages, { role: 'assistant', content: data.message }]);
+
+      // Update session context if returned from the API
+      // 🔮 Future: /api/chat can return context in response for richer triggering
+      if (data.context) setSessionContext(data.context);
+
     } catch (error) {
       setMessages([...newMessages, { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' }]);
     } finally {
@@ -86,353 +480,231 @@ export default function EmbedPage() {
     }
   };
 
-  const sendChip = async (text) => {
-    if (isLoading) return;
-    triggerShootingStar();
-    setChipsVisible(false);
-    const userMessage = { role: 'user', content: text };
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
-    setIsLoading(true);
+  // ── Lead form submission ────────────────────────────────────────────────────
+  const handleLeadSubmit = useCallback(async (formData) => {
+    setLeadSubmitting(true);
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, sessionId }),
-      });
-      const data = await response.json();
-      setMessages([...newMessages, { role: 'assistant', content: data.message }]);
-    } catch (error) {
-      setMessages([...newMessages, { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      // Build rich lead event with full conversation context
+      const conversationSummary = messages
+        .slice(-6)
+        .map(m => `${m.role === 'user' ? 'Customer' : 'InkanyeziBot'}: ${m.content}`)
+        .join('\n');
 
+      const userMessageCount = messages.filter(m => m.role === 'user').length;
+      const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || '';
+      const { score, reasons } = calculateTriggerScore(sessionContext, userMessageCount, lastUserMsg);
+
+      const leadEvent = {
+        // Core fields — match Make scenario exactly
+        name: formData.name || sessionContext?.name || '',
+        email: formData.email || sessionContext?.email || '',
+        phone: formData.phone || sessionContext?.whatsapp || '',
+        company: formData.company || sessionContext?.business || '',
+        industry: formData.industry || sessionContext?.industry || '',
+        service_interest: formData.service_interest || '',
+        message: formData.message || sessionContext?.pain_point || '',
+        has_email: (formData.email || sessionContext?.email) ? 'true' : 'false',
+        has_whatsapp: (formData.phone || sessionContext?.whatsapp) ? 'true' : 'false',
+        source: 'chatbot-lead-form',
+
+        // Conversation intelligence
+        session_id: sessionId,
+        message_count: userMessageCount,
+        conversation_summary: conversationSummary,
+        qualification_stage: sessionContext?.qualification_stage || 'new',
+        pain_point: sessionContext?.pain_point || '',
+        budget_signal: sessionContext?.budget_signal || '',
+        staff_count: sessionContext?.staff_count || '',
+        demo_booked: sessionContext?.demo_booked || false,
+        reference_number: sessionContext?.referenceNumber || '',
+        trigger_score: score,
+        trigger_reason: reasons.join(', '),
+
+        // Timestamps
+        timestamp: new Date().toISOString(),
+        sast_time: new Date().toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }),
+
+        // 🔮 Future fields:
+        // ai_lead_score: null,
+        // sentiment_score: null,
+        // utm_source: null,
+        // page_url: window.location.href,
+      };
+
+      const webhookUrl = process.env.NEXT_PUBLIC_MAKE_WEBHOOK_URL;
+      if (webhookUrl) {
+        await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(leadEvent),
+        });
+      }
+
+      setLeadFormSubmitted(true);
+      setShowLeadForm(false);
+
+      // Bot acknowledges the submission naturally
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `✦ Got it${formData.name ? `, ${formData.name.split(' ')[0]}` : ''}! Your details have been received. Sanele will personally reach out within 24 hours.\n\nIn the meantime, is there anything else you'd like to know about how we can help ${formData.company || 'your business'}?`
+        }]);
+      }, 600);
+
+      return { success: true };
+    } catch (err) {
+      console.error('[Inkanyezi] Lead submission error:', err);
+      return { success: false };
+    } finally {
+      setLeadSubmitting(false);
+    }
+  }, [messages, sessionContext, sessionId]);
+
+  // EMBED MODE — no bubble, chat fills 100% of iframe
   return (
-    <div style={{
-      width: '100%', height: '100vh',
-      background: 'linear-gradient(180deg, #020818 0%, #0B1120 40%, #0f0a1e 100%)',
-      display: 'flex', flexDirection: 'column',
-      fontFamily: 'sans-serif', position: 'relative', overflow: 'hidden'
-    }}>
+    <main style={{ width: '100%', height: '100vh', background: '#0B1120', margin: 0, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      {true && (
+        <div style={{ width: '100%', flex: 1, background: '#0B1120', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-      <style>{`
-        @keyframes twinkle {
-          0%, 100% { opacity: 0.3; transform: scale(1); }
-          50% { opacity: 1; transform: scale(1.3); }
-        }
-        @keyframes shootingStar {
-          0% { transform: translateX(0) translateY(0) rotate(45deg); opacity: 1; width: 0px; }
-          100% { transform: translateX(200px) translateY(200px) rotate(45deg); opacity: 0; width: 80px; }
-        }
-        @keyframes pulseGlow {
-          0%, 100% { box-shadow: 0 0 10px rgba(249,115,22,0.3), 0 0 20px rgba(249,115,22,0.1); }
-          50% { box-shadow: 0 0 20px rgba(249,115,22,0.6), 0 0 40px rgba(249,115,22,0.3); }
-        }
-        @keyframes rotateStar {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes constellation {
-          0%, 100% { opacity: 0.3; }
-          50% { opacity: 1; }
-        }
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes orbit {
-          from { transform: rotate(0deg) translateX(12px) rotate(0deg); }
-          to { transform: rotate(360deg) translateX(12px) rotate(-360deg); }
-        }
-        @keyframes doorOpenLeft {
-          0% { transform: translateX(0); }
-          30% { transform: translateX(-15%); }
-          70% { transform: translateX(-80%); }
-          90% { transform: translateX(-97%); }
-          100% { transform: translateX(-100%); }
-        }
-        @keyframes doorOpenRight {
-          0% { transform: translateX(0); }
-          30% { transform: translateX(15%); }
-          70% { transform: translateX(80%); }
-          90% { transform: translateX(97%); }
-          100% { transform: translateX(100%); }
-        }
-        @keyframes revealContent {
-          from { opacity: 0; transform: scale(0.97); }
-          to { opacity: 1; transform: scale(1); }
-        }
-        @keyframes energyPulse {
-          0%, 100% { opacity: 0.5; filter: brightness(0.8); }
-          50% { opacity: 1; filter: brightness(1.4); }
-        }
-        @keyframes scanSweep {
-          0% { transform: translateY(-100%); opacity: 0; }
-          10% { opacity: 1; }
-          90% { opacity: 1; }
-          100% { transform: translateY(1000%); opacity: 0; }
-        }
-        @keyframes engineGlow {
-          0%, 100% { opacity: 0.6; }
-          50% { opacity: 1; }
-        }
-        @keyframes chipPulse {
-          0%, 100% { box-shadow: 0 0 8px rgba(249,115,22,0.2); }
-          50% { box-shadow: 0 0 16px rgba(249,115,22,0.5); }
-        }
-        .message-bubble { animation: fadeInUp 0.3s ease forwards; }
-        .star-pulse { animation: twinkle var(--duration, 2s) ease-in-out infinite; }
-        .cosmic-border { animation: pulseGlow 3s ease-in-out infinite; }
-        .door-open-left { animation: doorOpenLeft 2.5s cubic-bezier(0.33, 0, 0.2, 1) forwards; }
-        .door-open-right { animation: doorOpenRight 2.5s cubic-bezier(0.33, 0, 0.2, 1) forwards; }
-        .content-reveal { animation: revealContent 0.6s ease 2.2s both; }
-        .chip-btn {
-          animation: chipPulse 2s ease-in-out infinite;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .chip-btn:hover {
-          background: rgba(249,115,22,0.25) !important;
-          border-color: rgba(249,115,22,0.8) !important;
-          transform: translateY(-1px);
-        }
-        .chip-btn:active { transform: scale(0.97); }
-        textarea:focus { border-color: rgba(249,115,22,0.6) !important; box-shadow: 0 0 12px rgba(249,115,22,0.3); }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(249,115,22,0.3); border-radius: 2px; }
-      `}</style>
-
-      {/* SPACESHIP DOORS */}
-      {doorsAnimating && (
-        <div style={{
-          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-          zIndex: 100, display: 'flex', overflow: 'hidden',
-          pointerEvents: doorsOpen ? 'none' : 'all'
-        }}>
-          <div className={doorsOpen ? 'door-open-left' : ''} style={{ width: '50%', height: '100%', position: 'relative', overflow: 'hidden', flexShrink: 0 }}>
-            <svg width="100%" height="100%" viewBox="0 0 200 600" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="doorBgL" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#050e20"/><stop offset="40%" stopColor="#0a1a35"/><stop offset="100%" stopColor="#040c1a"/>
-                </linearGradient>
-                <linearGradient id="panelGradL" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#0d2040"/><stop offset="50%" stopColor="#112545"/><stop offset="100%" stopColor="#0a1a35"/>
-                </linearGradient>
-                <linearGradient id="energyL" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="transparent"/><stop offset="30%" stopColor="#f97316" stopOpacity="0.6"/>
-                  <stop offset="50%" stopColor="#f97316"/><stop offset="70%" stopColor="#f97316" stopOpacity="0.6"/><stop offset="100%" stopColor="transparent"/>
-                </linearGradient>
-                <linearGradient id="edgeGlowL" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="transparent"/><stop offset="100%" stopColor="#f97316" stopOpacity="0.4"/>
-                </linearGradient>
-                <filter id="glow"><feGaussianBlur stdDeviation="2" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-              </defs>
-              <rect width="200" height="600" fill="url(#doorBgL)"/>
-              <path d="M8,20 L192,8 L192,592 L8,580 Z" fill="url(#panelGradL)" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.4"/>
-              <path d="M8,20 L192,8 L192,80 L8,95 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
-              <path d="M8,505 L192,520 L192,592 L8,580 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
-              <path d="M22,108 L178,96 L178,504 L22,492 Z" fill="#0c1e3a" stroke="#f97316" strokeWidth="0.8" strokeOpacity="0.3"/>
-              <rect x="60" y="155" width="118" height="5" rx="2" fill="url(#energyL)" style={{animation: 'energyPulse 1.5s ease-in-out infinite'}}/>
-              <rect x="60" y="220" width="118" height="5" rx="2" fill="url(#energyL)" style={{animation: 'energyPulse 1.8s ease-in-out 0.3s infinite'}}/>
-              <rect x="60" y="290" width="118" height="8" rx="3" fill="url(#energyL)" style={{animation: 'energyPulse 1.2s ease-in-out 0.1s infinite'}}/>
-              <rect x="60" y="370" width="118" height="5" rx="2" fill="url(#energyL)" style={{animation: 'energyPulse 1.6s ease-in-out 0.4s infinite'}}/>
-              <rect x="60" y="435" width="118" height="5" rx="2" fill="url(#energyL)" style={{animation: 'energyPulse 1.4s ease-in-out 0.2s infinite'}}/>
-              {[130, 195, 260, 325, 390, 455].map((y, i) => (
-                <g key={i}>
-                  <circle cx="30" cy={y} r="5" fill="#1a0800" stroke="#f97316" strokeWidth="1" strokeOpacity="0.7" filter="url(#glow)"/>
-                  <circle cx="30" cy={y} r="3" fill="#f97316" fillOpacity="0.8"/>
-                  <circle cx="29" cy={y-1} r="1" fill="white" fillOpacity="0.6"/>
-                </g>
-              ))}
-              <polygon points="100,10 88,30 112,30" fill="#f97316" fillOpacity="0.9" filter="url(#glow)"/>
-              <rect x="175" y="0" width="25" height="600" fill="url(#edgeGlowL)"/>
-              <rect x="8" y="590" width="184" height="10" fill="#f97316" fillOpacity="0.7" style={{animation: 'engineGlow 0.8s ease-in-out infinite'}}/>
-              <rect x="0" y="0" width="200" height="4" fill="url(#energyL)" style={{animation: 'scanSweep 1.5s ease-in-out 0.3s forwards'}}/>
-            </svg>
-          </div>
-          <div className={doorsOpen ? 'door-open-right' : ''} style={{ width: '50%', height: '100%', position: 'relative', overflow: 'hidden', flexShrink: 0 }}>
-            <svg width="100%" height="100%" viewBox="0 0 200 600" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="doorBgR" x1="100%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#050e20"/><stop offset="40%" stopColor="#0a1a35"/><stop offset="100%" stopColor="#040c1a"/>
-                </linearGradient>
-                <linearGradient id="panelGradR" x1="100%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#0d2040"/><stop offset="50%" stopColor="#112545"/><stop offset="100%" stopColor="#0a1a35"/>
-                </linearGradient>
-                <linearGradient id="energyR" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="transparent"/><stop offset="30%" stopColor="#f97316" stopOpacity="0.6"/>
-                  <stop offset="50%" stopColor="#f97316"/><stop offset="70%" stopColor="#f97316" stopOpacity="0.6"/><stop offset="100%" stopColor="transparent"/>
-                </linearGradient>
-                <linearGradient id="edgeGlowR" x1="100%" y1="0%" x2="0%" y2="0%">
-                  <stop offset="0%" stopColor="transparent"/><stop offset="100%" stopColor="#f97316" stopOpacity="0.4"/>
-                </linearGradient>
-              </defs>
-              <rect width="200" height="600" fill="url(#doorBgR)"/>
-              <path d="M8,8 L192,20 L192,580 L8,592 Z" fill="url(#panelGradR)" stroke="#f97316" strokeWidth="1.5" strokeOpacity="0.4"/>
-              <path d="M8,8 L192,20 L192,95 L8,80 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
-              <path d="M8,520 L192,505 L192,580 L8,592 Z" fill="#0f2040" stroke="#f97316" strokeWidth="1" strokeOpacity="0.5"/>
-              <path d="M22,96 L178,108 L178,492 L22,504 Z" fill="#0c1e3a" stroke="#f97316" strokeWidth="0.8" strokeOpacity="0.3"/>
-              <rect x="22" y="155" width="118" height="5" rx="2" fill="url(#energyR)" style={{animation: 'energyPulse 1.5s ease-in-out infinite'}}/>
-              <rect x="22" y="220" width="118" height="5" rx="2" fill="url(#energyR)" style={{animation: 'energyPulse 1.8s ease-in-out 0.3s infinite'}}/>
-              <rect x="22" y="290" width="118" height="8" rx="3" fill="url(#energyR)" style={{animation: 'energyPulse 1.2s ease-in-out 0.1s infinite'}}/>
-              <rect x="22" y="370" width="118" height="5" rx="2" fill="url(#energyR)" style={{animation: 'energyPulse 1.6s ease-in-out 0.4s infinite'}}/>
-              <rect x="22" y="435" width="118" height="5" rx="2" fill="url(#energyR)" style={{animation: 'energyPulse 1.4s ease-in-out 0.2s infinite'}}/>
-              {[130, 195, 260, 325, 390, 455].map((y, i) => (
-                <g key={i}>
-                  <circle cx="170" cy={y} r="5" fill="#1a0800" stroke="#f97316" strokeWidth="1" strokeOpacity="0.7" filter="url(#glow)"/>
-                  <circle cx="170" cy={y} r="3" fill="#f97316" fillOpacity="0.8"/>
-                  <circle cx="169" cy={y-1} r="1" fill="white" fillOpacity="0.6"/>
-                </g>
-              ))}
-              <polygon points="100,10 88,30 112,30" fill="#f97316" fillOpacity="0.9" filter="url(#glow)"/>
-              <rect x="0" y="0" width="25" height="600" fill="url(#edgeGlowR)"/>
-              <rect x="8" y="590" width="184" height="10" fill="#f97316" fillOpacity="0.7" style={{animation: 'engineGlow 0.8s ease-in-out infinite'}}/>
-              <rect x="0" y="0" width="200" height="4" fill="url(#energyR)" style={{animation: 'scanSweep 1.5s ease-in-out 0.3s forwards'}}/>
-            </svg>
-          </div>
-        </div>
-      )}
-
-      {/* MAIN CONTENT */}
-      <div className="content-reveal" style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', position: 'relative', zIndex: 1 }}>
-        {stars.map(star => (
-          <div key={star.id} className="star-pulse" style={{
-            position: 'absolute', left: `${star.x}%`, top: `${star.y}%`,
-            width: `${star.size}px`, height: `${star.size}px`,
-            borderRadius: '50%', background: 'white',
-            '--duration': `${star.duration}s`, pointerEvents: 'none', zIndex: 0
-          }} />
-        ))}
-        {shootingStars.map(star => (
-          <div key={star.id} style={{
-            position: 'absolute', left: `${star.startX}%`, top: `${star.startY}%`,
-            height: '2px', background: 'linear-gradient(90deg, transparent, #f97316, white)',
-            borderRadius: '2px', zIndex: 1, pointerEvents: 'none',
-            animation: 'shootingStar 1s ease-out forwards'
-          }} />
-        ))}
-
-        {/* Header */}
-        <div className="cosmic-border" style={{
-          background: 'linear-gradient(135deg, rgba(15,27,53,0.95), rgba(26,42,80,0.95))',
-          borderBottom: '1px solid rgba(249,115,22,0.3)',
-          padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px',
-          position: 'relative', zIndex: 2, backdropFilter: 'blur(10px)'
-        }}>
-          <div style={{ position: 'relative', width: '38px', height: '38px', flexShrink: 0 }}>
+          {/* Header */}
+          <div style={{
+            background: 'linear-gradient(135deg, #0f1b35, #1a2a50)',
+            borderBottom: '1px solid rgba(249,115,22,0.2)',
+            padding: '14px 18px',
+            display: 'flex', alignItems: 'center', gap: '12px',
+          }}>
             <div style={{
-              width: '38px', height: '38px', borderRadius: '50%',
+              width: '44px', height: '44px', borderRadius: '50%',
               background: 'linear-gradient(135deg, #f97316, #c2410c)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '18px', boxShadow: '0 0 15px rgba(249,115,22,0.6)',
-              animation: 'rotateStar 8s linear infinite'
+              fontSize: '22px', flexShrink: 0,
+              boxShadow: '0 0 12px rgba(249,115,22,0.5)',
             }}>⭐</div>
-            <div style={{
-              position: 'absolute', top: '50%', left: '50%',
-              width: '6px', height: '6px', borderRadius: '50%',
-              background: '#f97316', marginTop: '-3px', marginLeft: '-3px',
-              animation: 'orbit 3s linear infinite', boxShadow: '0 0 6px rgba(249,115,22,0.8)'
-            }} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: '700', fontSize: '14px', color: '#ffffff', letterSpacing: '0.5px' }}>InkanyeziBot ✦</div>
-            <div style={{ fontSize: '10px', color: '#f97316', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e', display: 'inline-block', boxShadow: '0 0 6px #22c55e' }}></span>
-              Online · AI Automation · Durban, ZA 🇿🇦
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            {[0, 0.5, 1].map((delay, i) => (
-              <div key={i} style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'rgba(249,115,22,0.6)', animation: `constellation 2s ease-in-out ${delay}s infinite` }} />
-            ))}
-          </div>
-        </div>
-
-        {/* Messages */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px', position: 'relative', zIndex: 2 }}>
-          {messages.map((msg, i) => (
-            <div key={i} className="message-bubble" style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: '6px' }}>
-              {msg.role === 'assistant' && (
-                <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'linear-gradient(135deg, #f97316, #c2410c)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0, boxShadow: '0 0 8px rgba(249,115,22,0.5)' }}>⭐</div>
-              )}
-              <div style={{
-                maxWidth: '78%', padding: '10px 14px', borderRadius: '14px',
-                fontSize: '13px', lineHeight: '1.6', wordBreak: 'break-word',
-                background: msg.role === 'user' ? 'linear-gradient(135deg, #f97316, #c2410c)' : 'rgba(255,255,255,0.05)',
-                color: '#ffffff',
-                border: msg.role === 'user' ? 'none' : '1px solid rgba(249,115,22,0.2)',
-                boxShadow: msg.role === 'user' ? '0 0 15px rgba(249,115,22,0.4)' : '0 0 10px rgba(0,0,0,0.3)',
-                borderBottomLeftRadius: msg.role === 'assistant' ? '4px' : '14px',
-                borderBottomRightRadius: msg.role === 'user' ? '4px' : '14px',
-                backdropFilter: 'blur(10px)'
-              }} dangerouslySetInnerHTML={{ __html: formatMessage(msg.content) }} />
-            </div>
-          ))}
-          {isLoading && (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px' }}>
-              <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'linear-gradient(135deg, #f97316, #c2410c)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', boxShadow: '0 0 8px rgba(249,115,22,0.5)' }}>⭐</div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', padding: '12px 16px', borderRadius: '14px', borderBottomLeftRadius: '4px', border: '1px solid rgba(249,115,22,0.2)', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                {[0, 0.2, 0.4].map((delay, i) => (
-                  <div key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f97316', animation: `constellation 1s ease-in-out ${delay}s infinite`, boxShadow: '0 0 6px rgba(249,115,22,0.6)' }} />
-                ))}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: '700', fontSize: '15px', color: '#ffffff' }}>InkanyeziBot</div>
+              <div style={{ fontSize: '11px', color: '#f97316', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }}></span>
+                Online · Inkanyezi Technologies
               </div>
             </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+            <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', textAlign: 'right' }}>🇿🇦 SA AI</div>
+          </div>
 
-        {/* Quick Reply Chips */}
-        {chipsVisible && (
-          <div style={{ padding: '8px 12px 4px', display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative', zIndex: 2 }}>
-            <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', textAlign: 'center', letterSpacing: '0.5px' }}>Quick questions:</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center' }}>
-              {[
-                { label: '📊 Calculate my ROI', text: 'Calculate my ROI' },
-                { label: '🚀 Show me what you\'ve built', text: 'Show me what you\'ve built' },
-                { label: '📅 Book a free demo', text: 'Book a free demo' },
-                { label: '💬 Automate my WhatsApp', text: 'Automate my WhatsApp' },
-              ].map((chip, i) => (
-                <button key={i} className="chip-btn" onClick={() => sendChip(chip.text)} style={{
-                  padding: '7px 14px', borderRadius: '20px',
-                  background: 'rgba(249,115,22,0.1)',
-                  border: '1px solid rgba(249,115,22,0.4)',
-                  color: '#ffffff', fontSize: '12px',
-                  fontFamily: 'sans-serif', outline: 'none',
-                }}>
-                  {chip.label}
-                </button>
-              ))}
+          {/* Messages */}
+          <div style={{
+            flex: 1, overflowY: 'auto', padding: '14px',
+            display: 'flex', flexDirection: 'column', gap: '10px',
+            background: '#0B1120',
+          }}>
+            {messages.map((msg, i) => (
+              <div key={i} style={{
+                display: 'flex',
+                justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                alignItems: 'flex-end', gap: '6px',
+              }}>
+                {msg.role === 'assistant' && (
+                  <div style={{
+                    width: '26px', height: '26px', borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #f97316, #c2410c)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '12px', flexShrink: 0,
+                  }}>⭐</div>
+                )}
+                <div
+                  style={{
+                    maxWidth: '78%', padding: '10px 14px', borderRadius: '14px',
+                    fontSize: '13px', lineHeight: '1.6', wordBreak: 'break-word',
+                    background: msg.role === 'user'
+                      ? 'linear-gradient(135deg, #f97316, #c2410c)'
+                      : 'rgba(255,255,255,0.06)',
+                    color: '#ffffff',
+                    border: msg.role === 'user' ? 'none' : '1px solid rgba(249,115,22,0.15)',
+                    boxShadow: msg.role === 'user' ? '0 0 12px rgba(249,115,22,0.3)' : 'none',
+                    borderBottomLeftRadius: msg.role === 'assistant' ? '4px' : '14px',
+                    borderBottomRightRadius: msg.role === 'user' ? '4px' : '14px',
+                  }}
+                  dangerouslySetInnerHTML={{ __html: formatMessage(msg.content) }}
+                />
+              </div>
+            ))}
+
+            {/* ── INLINE LEAD FORM — appears as a bot message ── */}
+            {showLeadForm && !leadFormSubmitted && (
+              <ChatLeadForm
+                onSubmit={handleLeadSubmit}
+                onDismiss={() => setShowLeadForm(false)}
+                sessionContext={sessionContext}
+                submitting={leadSubmitting}
+              />
+            )}
+
+            {isLoading && (
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px' }}>
+                <div style={{
+                  width: '26px', height: '26px', borderRadius: '50%',
+                  background: 'linear-gradient(135deg, #f97316, #c2410c)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px',
+                }}>⭐</div>
+                <div style={{
+                  background: 'rgba(255,255,255,0.06)', padding: '10px 16px',
+                  borderRadius: '14px', borderBottomLeftRadius: '4px',
+                  fontSize: '13px', color: '#f97316',
+                  border: '1px solid rgba(249,115,22,0.15)',
+                }}>✦ Thinking...</div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Area */}
+          <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(249,115,22,0.15)', background: '#0f1b35' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+              <textarea
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+                }}
+                placeholder="Type a message... (Enter to send)"
+                rows={1}
+                style={{
+                  flex: 1, padding: '10px 14px', borderRadius: '16px',
+                  background: 'rgba(255,255,255,0.07)',
+                  border: '1px solid rgba(249,115,22,0.2)',
+                  color: '#ffffff', outline: 'none', fontSize: '13px',
+                  resize: 'none', lineHeight: '1.5', wordBreak: 'break-word',
+                  overflowY: 'auto', maxHeight: '100px', fontFamily: 'sans-serif',
+                }}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={isLoading}
+                style={{
+                  width: '42px', height: '42px', borderRadius: '50%',
+                  background: isLoading ? 'rgba(249,115,22,0.4)' : 'linear-gradient(135deg, #f97316, #c2410c)',
+                  border: 'none', cursor: isLoading ? 'not-allowed' : 'pointer',
+                  color: 'white', fontSize: '16px', flexShrink: 0,
+                  boxShadow: '0 0 12px rgba(249,115,22,0.4)',
+                }}>➤</button>
+            </div>
+            <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', marginTop: '6px', textAlign: 'center' }}>
+              Press Enter to send · Shift+Enter for new line
             </div>
           </div>
-        )}
 
-        {/* Input */}
-        <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(249,115,22,0.15)', background: 'rgba(15,27,53,0.95)', backdropFilter: 'blur(10px)', position: 'relative', zIndex: 2 }}>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-            <textarea
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                e.target.style.height = 'auto';
-                e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px';
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-              }}
-              placeholder="Send a message into the cosmos..."
-              rows={1}
-              style={{ flex: 1, padding: '10px 14px', borderRadius: '20px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(249,115,22,0.25)', color: '#ffffff', outline: 'none', fontSize: '13px', resize: 'none', lineHeight: '1.5', fontFamily: 'sans-serif', transition: 'all 0.3s ease' }}
-            />
-            <button onClick={sendMessage} disabled={isLoading} style={{ width: '42px', height: '42px', borderRadius: '50%', background: isLoading ? 'rgba(249,115,22,0.3)' : 'linear-gradient(135deg, #f97316, #c2410c)', border: 'none', cursor: isLoading ? 'not-allowed' : 'pointer', color: 'white', fontSize: '16px', flexShrink: 0, boxShadow: '0 0 15px rgba(249,115,22,0.5)', transition: 'all 0.3s ease' }}>🚀</button>
-          </div>
-          <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.2)', marginTop: '5px', textAlign: 'center', letterSpacing: '0.5px' }}>
-            ⭐ INKANYEZI TECHNOLOGIES · WE ARE THE SIGNAL IN THE NOISE ✦
+          {/* Footer */}
+          <div style={{
+            padding: '6px', textAlign: 'center', background: '#0f1b35',
+            fontSize: '10px', color: 'rgba(255,255,255,0.25)',
+            borderTop: '1px solid rgba(249,115,22,0.1)',
+          }}>
+            ⭐ Powered by Inkanyezi Technologies · AI Automation 🇿🇦
           </div>
         </div>
-      </div>
-    </div>
+    </main>
   );
 }
