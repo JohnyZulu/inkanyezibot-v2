@@ -414,7 +414,7 @@ function ChatLeadForm({ onSubmit, onDismiss, sessionContext = {}, submitting = f
 export default function Home() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
-    { role: 'assistant', content: "Sawubona! 👋 I'm InkanyeziBot.\n\nI'm here to help you discover how AI automation can transform your SA business. What does your business do?" }
+    { role: 'assistant', content: "Sawubona! 👋 I'm InkanyeziBot — your AI guide to automation for South African businesses.\n\nBy chatting, you agree to our POPIA-compliant data policy.\n\nWhat does your business do, and what's the biggest challenge slowing you down right now?" }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
