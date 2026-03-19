@@ -705,6 +705,7 @@ export default function Home() {
             ⭐ Powered by Inkanyezi Technologies · AI Automation 🇿🇦
           </div>
         </div>
+      )}
     </main>
   );
 }
