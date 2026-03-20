@@ -725,7 +725,7 @@ export default function Home() {
         textarea::-webkit-scrollbar-thumb { background: rgba(244,185,66,0.3); }
       `}</style>
 
-      <main style={{ minHeight: '100vh', background: C.void }}>
+      <main style={{ minHeight: '100vh', background: 'transparent' }}>
 
         {/* ── PROACTIVE GREETING BUBBLE ── */}
         {showGreeting && !isOpen && (
