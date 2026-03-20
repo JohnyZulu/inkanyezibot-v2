@@ -514,7 +514,7 @@ function formatMessage(text) {
 // MAIN CHATBOT PAGE
 // ══════════════════════════════════════════════════════════════════════════════
 export default function Home() {
-  const [isOpen, setIsOpen]     = useState(false);
+  const [isOpen, setIsOpen]     = useState(true); // Always open in embed mode
   const [messages, setMessages] = useState([{
     role: 'assistant',
     content: "Sawubona! 👋 I'm InkanyeziBot — your AI guide to automation for South African businesses.\n\nBy chatting, you agree to our POPIA-compliant data policy.\n\nWhat does your business do, and what's the biggest challenge slowing you down right now?",
@@ -537,30 +537,7 @@ export default function Home() {
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, showLeadForm, isLoading]);
 
-  // ── Proactive greeting — appears after 8s idle if chat not opened ──────────
-  useEffect(() => {
-    const showTimer = setTimeout(() => {
-      if (!isOpen) {
-        setShowGreeting(true);
-        setTimeout(() => setGreetingVisible(true), 50);
-      }
-    }, 8000);
-
-    const hideTimer = setTimeout(() => {
-      setGreetingVisible(false);
-      setTimeout(() => setShowGreeting(false), 400);
-    }, 20000);
-
-    return () => { clearTimeout(showTimer); clearTimeout(hideTimer); };
-  }, []);
-
-  // Hide greeting when chat opens
-  useEffect(() => {
-    if (isOpen) {
-      setGreetingVisible(false);
-      setTimeout(() => setShowGreeting(false), 400);
-    }
-  }, [isOpen]);
+  // Embed mode — no proactive greeting needed
 
   // Trigger evaluation
   useEffect(() => {
@@ -725,144 +702,18 @@ export default function Home() {
         textarea::-webkit-scrollbar-thumb { background: rgba(244,185,66,0.3); }
       `}</style>
 
-      <main style={{ minHeight: '100vh', background: C.void }}>
+      {/* EMBED MODE — fills iframe, no bubble button */}
+      <main style={{ width: '100%', height: '100vh', background: C.void, margin: 0, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
-        {/* ── PROACTIVE GREETING BUBBLE ── */}
-        {showGreeting && !isOpen && (
-          <div
-            onClick={() => setIsOpen(true)}
-            style={{
-              position: 'fixed', bottom: 100, right: 24, zIndex: 999,
-              maxWidth: 260, cursor: 'pointer',
-              opacity: greetingVisible ? 1 : 0,
-              transform: greetingVisible ? 'translateY(0) scale(1)' : 'translateY(10px) scale(0.95)',
-              transition: 'opacity 0.35s ease, transform 0.35s ease',
-            }}
-          >
-            {/* Card */}
-            <div style={{
-              background: 'linear-gradient(145deg, rgba(15,27,53,0.98), rgba(10,22,40,0.98))',
-              border: '1px solid rgba(249,115,22,0.25)',
-              borderRadius: 16, borderBottomRightRadius: 4,
-              padding: '12px 14px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(244,185,66,0.06)',
-              position: 'relative', overflow: 'hidden',
-            }}>
-              {/* Shimmer top */}
-              <div style={{
-                position: 'absolute', top: 0, left: 0, right: 0, height: 1.5,
-                background: 'linear-gradient(90deg, transparent, rgba(244,185,66,0.6), transparent)',
-              }} />
-
-              {/* Bot row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-                  background: 'linear-gradient(135deg, #FF6B35, #c2410c)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, boxShadow: '0 0 10px rgba(249,115,22,0.5)',
-                }}>⭐</div>
-                <div>
-                  <div style={{
-                    fontSize: '0.7rem', fontWeight: 700, color: '#fff',
-                    fontFamily: "'Syne', sans-serif",
-                  }}>InkanyeziBot</div>
-                  <div style={{
-                    fontSize: '0.55rem', color: '#f97316',
-                    fontFamily: "'Space Mono', monospace",
-                    display: 'flex', alignItems: 'center', gap: 4,
-                  }}>
-                    <span style={{
-                      width: 5, height: 5, borderRadius: '50%',
-                      background: '#22c55e', display: 'inline-block',
-                    }} />
-                    Online now
-                  </div>
-                </div>
-              </div>
-
-              {/* Message */}
-              <p style={{
-                margin: 0, fontSize: '0.78rem', color: 'rgba(255,255,255,0.85)',
-                lineHeight: 1.55, fontFamily: "'DM Sans', sans-serif",
-              }}>
-                Sawubona! 👋 Automating a South African business?{' '}
-                <span style={{ color: '#F4B942', fontWeight: 600 }}>
-                  I can show you how in 3 minutes.
-                </span>
-              </p>
-
-              {/* CTA hint */}
-              <div style={{
-                marginTop: 8, display: 'flex', alignItems: 'center',
-                gap: 4, fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)',
-                fontFamily: "'Space Mono', monospace",
-              }}>
-                <span>Tap to chat</span>
-                <span style={{ color: '#F4B942' }}>→</span>
-              </div>
-            </div>
-
-            {/* Pointer triangle */}
-            <div style={{
-              position: 'absolute', bottom: -7, right: 18,
-              width: 0, height: 0,
-              borderLeft: '8px solid transparent',
-              borderRight: '8px solid transparent',
-              borderTop: '8px solid rgba(15,27,53,0.98)',
-            }} />
-          </div>
-        )}
-
-        {/* ── FLOATING CHAT BUBBLE ── */}
-        <button
-          onClick={() => setIsOpen(o => !o)}
-          aria-label={isOpen ? 'Close chat' : 'Open InkanyeziBot'}
-          style={{
-            position: 'fixed', bottom: 24, right: 24, zIndex: 1000,
-            width: 64, height: 64, borderRadius: '50%',
-            background: `linear-gradient(135deg, ${C.orange}, #c2410c)`,
-            border: `2px solid rgba(249,115,22,0.45)`,
-            cursor: 'pointer', fontSize: 26,
-            animation: 'floatBubble 3s ease-in-out infinite',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'transform 0.2s',
-          }}
-        >
-          {/* Orbiting dot */}
-          {!isOpen && (
-            <div style={{
-              position: 'absolute', width: 64, height: 64,
-              animation: 'orbitRing 4s linear infinite',
-              pointerEvents: 'none',
-            }}>
-              <div style={{
-                position: 'absolute', top: -3, left: '50%',
-                width: 7, height: 7, borderRadius: '50%',
-                background: C.gold, transform: 'translateX(-50%)',
-                boxShadow: `0 0 10px ${C.gold}`,
-              }} />
-            </div>
-          )}
-          <span style={{ position: 'relative', zIndex: 1, transition: 'transform 0.3s', transform: isOpen ? 'rotate(45deg)' : 'none' }}>
-            {isOpen ? '✕' : '⭐'}
-          </span>
-        </button>
-
-        {/* ── CHAT WINDOW ── */}
         {isOpen && (
           <div style={{
-            position: 'fixed', bottom: 100, right: 24,
-            width: 370, height: 580,
+            width: '100%', height: '100%',
             display: 'flex', flexDirection: 'column',
-            zIndex: 999, overflow: 'hidden',
-            borderRadius: 20,
             background: `linear-gradient(160deg, ${C.midnight} 0%, ${C.void} 100%)`,
-            border: '1px solid rgba(249,115,22,0.2)',
-            boxShadow: '0 0 0 1px rgba(244,185,66,0.05), 0 0 50px rgba(249,115,22,0.12), 0 25px 70px rgba(0,0,0,0.7)',
-            animation: 'windowSlide 0.35s cubic-bezier(0.16,1,0.3,1) forwards',
+            overflow: 'hidden',
           }}>
-            {/* Cosmos background inside window */}
+
+          {/* Cosmos background inside window */}
             <CosmosCanvas width={370} height={580} />
 
             {/* ── HEADER ── */}
