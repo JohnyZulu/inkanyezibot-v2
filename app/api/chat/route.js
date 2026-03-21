@@ -1,5 +1,18 @@
 import { NextResponse } from 'next/server';
 
+// ── CORS — allow requests from Lovable site and any other origin ──────────────
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Max-Age': '86400',
+};
+
+// Handle OPTIONS preflight requests
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const NEON_URL = process.env.NEON_DATABASE_URL;
 const NEON_API_KEY = process.env.NEON_API_KEY;
@@ -456,12 +469,12 @@ export async function POST(request) {
     const { messages, sessionId } = await request.json();
 
     if (!messages || messages.length === 0) {
-      return NextResponse.json({ error: 'Messages are required' }, { status: 400 });
+      return NextResponse.json({ error: 'Messages are required' }, { status: 400, headers: CORS_HEADERS });
     }
 
     const latestMessage = messages[messages.length - 1];
     if (!latestMessage?.content) {
-      return NextResponse.json({ error: 'No message content found' }, { status: 400 });
+      return NextResponse.json({ error: 'No message content found' }, { status: 400, headers: CORS_HEADERS });
     }
 
     // STEP 1: Load memory from Neon
@@ -511,7 +524,7 @@ export async function POST(request) {
     if (!geminiResponse.ok) {
       const errorData = await geminiResponse.json();
       console.error('Gemini API error:', errorData);
-      return NextResponse.json({ error: 'AI service error' }, { status: 500 });
+      return NextResponse.json({ error: 'AI service error' }, { status: 500, headers: CORS_HEADERS });
     }
 
     const geminiData = await geminiResponse.json();
@@ -519,7 +532,7 @@ export async function POST(request) {
       || 'Sorry, I could not process that. Please try again.';
 
     // STEP 5: Return reply immediately to user
-    const response = NextResponse.json({ message: aiReply });
+    const response = NextResponse.json({ message: aiReply }, { headers: CORS_HEADERS });
 
     // STEP 6: Background tasks — extract context, assign reference number, save, fire webhook
     ;(async () => {
@@ -570,6 +583,6 @@ export async function POST(request) {
 
   } catch (error) {
     console.error('Chat route error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: CORS_HEADERS });
   }
 }
