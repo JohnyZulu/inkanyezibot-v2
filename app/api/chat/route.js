@@ -87,7 +87,7 @@ Company: Inkanyezi Technologies
 Founder: Sanele (24h follow-up, Durban KZN)
 Tagline: "We are the signal in the noise"
 WhatsApp: +27 65 880 4122
-Email: sishangesanele@gmail.com
+Email: inkanyeziaisolutions3@gmail.com
 
 3 SERVICES (only these — never invent others):
 1. AUTOMATE — WhatsApp AI agents, chatbots, Make.com workflows, Google Sheets CRM, auto notifications.
