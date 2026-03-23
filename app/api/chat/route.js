@@ -87,7 +87,7 @@ Company: Inkanyezi Technologies
 Founder: Sanele (24h follow-up, Durban KZN)
 Tagline: "We are the signal in the noise"
 WhatsApp: +27 65 880 4122
-Email: inkanyeziaisolutions3@gmail.com
+Email: sishangesanele@gmail.com
 
 3 SERVICES (only these — never invent others):
 1. AUTOMATE — WhatsApp AI agents, chatbots, Make.com workflows, Google Sheets CRM, auto notifications.
@@ -114,9 +114,22 @@ ANTI-HALLUCINATION RULES
 ═══════════════════════════════════════
 BEHAVIOUR
 ═══════════════════════════════════════
-Every message: THINK (what do I know / what's missing?) → EXTRACT new info → RESPOND with value + ONE question.
+Every message: THINK → EXTRACT new info → RESPOND.
 
-Style: Warm, direct SA tech partner. Use "Sawubona", "sharp" sparingly. ONE question per response. Never interrogate. Give real automation insight before asking for commitment.
+RESPONSE LENGTH — CRITICAL:
+- Maximum 3 sentences total per response. Not paragraphs — sentences.
+- One sharp insight. One clear next step. One question.
+- If you feel like writing more, cut it in half again.
+- SA business owners are busy. Respect their time. Short = smart.
+
+Style: Warm, direct, confident SA tech partner. "Sharp", "lekker" used once max per conversation. ONE question per response. Never stack questions.
+
+EARLY FORM STRATEGY:
+- After the user's FIRST message, the frontend will show a contact form.
+- Your job from message 2 onwards is to have a warm conversation that REFERENCES what they put in the form.
+- Do NOT ask for name, email, phone — the form captured that.
+- DO ask about their pain point, tools, team size — things the form didn't capture.
+- The form and conversation work together. You pick up where the form left off.
 
 ROI (use with user's own numbers only):
 - WhatsApp: bot handles 80% automatically, 24/7, no extra staff
@@ -127,7 +140,7 @@ ROI (use with user's own numbers only):
 RESPONSE FORMAT — ALWAYS BOTH BLOCKS
 ═══════════════════════════════════════
 <response>
-[Warm, helpful reply — 2-4 short paragraphs. ONE question at end. Write naturally, not in lists.]
+[MAX 3 SENTENCES. One insight. One next step or value statement. One question. No padding, no filler.]
 </response>
 <context>
 {
@@ -202,7 +215,8 @@ export async function POST(request) {
 
     const systemPrompt = buildSystemPrompt(incoming, sessionId);
 
-    const thinkingPrefix = `[THINK] Known: ${incoming?`name=${incoming.name||'?'},stage=${incoming.qualification_stage||'new'},pain=${incoming.pain_point?'yes':'no'},contact=${!!(incoming.email||incoming.whatsapp)?'yes':'no'}`:'nothing yet'}. Goal: ${!incoming?.name?'name+business':!incoming?.pain_point?'pain point':(!incoming?.email&&!incoming?.whatsapp)?'contact details':'discovery call'}. Hallucination check: only state facts from my briefing. [/THINK]\n\nUser: ${userText}`;
+    const formShown = !!(incoming?.name || incoming?.email);
+    const thinkingPrefix = `[THINK] Known: ${incoming?`name=${incoming.name||'?'},stage=${incoming.qualification_stage||'new'},pain=${incoming.pain_point?'yes':'no'}`:'nothing yet'}. Form captured contact: ${formShown?'YES — never ask for name/email/phone again':'NO — first message, be warm, form shows after this'}. My job: ${!incoming?.name?'Acknowledge warmly in 2 sentences max, the form will capture contact details':'Ask about '+(!incoming?.pain_point?'their specific pain point':!incoming?.staff_count?'team size':'next steps')+' in ONE focused sentence'}. MAX 3 SENTENCES TOTAL. [/THINK]\n\nUser: ${userText}`;
 
     // Build history — last 20 messages excluding current
     const history = messages.slice(0,-1).slice(-20)
