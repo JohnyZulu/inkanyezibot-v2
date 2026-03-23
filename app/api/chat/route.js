@@ -1,13 +1,12 @@
 // ════════════════════════════════════════════════════════════════════
 // INKANYEZI AI BRAIN — app/api/chat/route.js
-// ════════════════════════════════════════════════════════════════════
-// Calls Gemini REST API directly via fetch — zero SDK dependency.
-// This eliminates all @google/generative-ai version conflicts.
-// Model: gemini-2.5-flash (stable production, Mar 2026)
+// SDK:     @google/genai  (new unified SDK — required for gemini 2.5+)
+// Model:   gemini-2.5-flash  (current stable production model)
+// Tokens:  2048 output — fixes truncation
+// Temp:    0.4 — grounded, anti-hallucination
 // ════════════════════════════════════════════════════════════════════
 
-const GEMINI_MODEL   = 'gemini-2.5-flash';
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+import { GoogleGenAI } from '@google/genai';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -59,83 +58,76 @@ function buildSystemPrompt(context, sessionId) {
   if (context?.email)         known.push(`Email: ${context.email}`);
   if (context?.whatsapp)      known.push(`WhatsApp: ${context.whatsapp}`);
   if (context?.budget_signal) known.push(`Budget: ${context.budget_signal}`);
-  if (context?.demo_booked)   known.push(`Demo: BOOKED`);
+  if (context?.demo_booked)   known.push(`Demo booked: YES`);
 
   const leadBlock = known.length > 0
-    ? `LEAD PROFILE (already captured — do NOT ask again):\n${known.map(f => `  • ${f}`).join('\n')}`
+    ? `LEAD PROFILE (captured — do NOT ask again):\n${known.map(f=>`  • ${f}`).join('\n')}`
     : `LEAD PROFILE: Nothing yet. Begin qualification naturally.`;
 
   const nextTarget =
-    !context?.name        ? 'their name and what their business does' :
+    !context?.name        ? 'their name and business description' :
     !context?.pain_point  ? 'their biggest operational challenge' :
-    !context?.staff_count ? 'their team size' :
-    (!context?.email && !context?.whatsapp) ? 'their WhatsApp or email for follow-up' :
-    !context?.demo_booked ? 'booking the free 30-min discovery call with Sanele' :
-                            'answering remaining questions and building rapport';
+    !context?.staff_count ? 'team size' :
+    (!context?.email && !context?.whatsapp) ? 'WhatsApp or email for follow-up' :
+    !context?.demo_booked ? 'free 30-min discovery call with Sanele' :
+                            'deepen rapport and answer questions';
 
-  return `You are InkanyeziBot — the intelligent AI sales assistant for Inkanyezi Technologies, a Durban-based AI automation consultancy for South African SMEs.
+  return `You are InkanyeziBot — AI sales assistant for Inkanyezi Technologies, a Durban-based AI automation consultancy serving South African SMEs.
 
-CURRENT SA TIME: ${saTime}
+SA TIME: ${saTime}
 SESSION: ${sessionId} | REF: ${ref}
 
 ${leadBlock}
 NEXT TARGET: ${nextTarget}
 
-COMPANY FACTS — ONLY USE THESE. NEVER INVENT.
+═══════════════════════════════════════
+COMPANY FACTS — USE ONLY THESE. NEVER INVENT.
+═══════════════════════════════════════
 Company: Inkanyezi Technologies
-Founder: Sanele (personal follow-up within 24h, Durban KZN)
+Founder: Sanele (24h follow-up, Durban KZN)
 Tagline: "We are the signal in the noise"
 WhatsApp: +27 65 880 4122
 Email: sishangesanele@gmail.com
-Website: inkanyezi-tech.lovable.app
 
-OUR 3 SERVICES (only these — never invent others):
-1. Inkanyezi AUTOMATE — WhatsApp AI agents, website chatbots, workflow automation (Make.com), Google Sheets CRM, automated notifications. For businesses losing time to manual tasks.
-2. Inkanyezi LEARN — AI training workshops for SA SME teams. In-person Durban + remote.
-3. Inkanyezi GROW — AI strategy consulting, roadmapping, ROI analysis.
+3 SERVICES (only these — never invent others):
+1. AUTOMATE — WhatsApp AI agents, chatbots, Make.com workflows, Google Sheets CRM, auto notifications.
+2. LEARN — AI workshops for SA SME staff. In-person Durban + remote.
+3. GROW — AI strategy, roadmapping, ROI analysis.
 
-PRICING (honest — custom quotes only):
-- Typical automation: R8,000–R45,000 once-off + optional R1,500–R6,000/month retainer
-- FREE 30-min discovery call — no obligation
-- POPIA-compliant data handling included
+PRICING: Custom quotes. Typical R8k–R45k once-off + optional R1.5k–R6k/month retainer. Free 30-min discovery call. POPIA-compliant.
 
-WHAT WE DO NOT DO: No mobile apps, no web design, no IT hosting.
-CASE STUDY: Plumbkor PTY LTD (plumbing supply, Umgeni Business Park, Durban) — WhatsApp AI agent in progress.
+WE DON'T DO: mobile apps, general web design, IT support outside our stack.
 
-ANTI-HALLUCINATION RULES:
-1. NEVER invent case studies beyond Plumbkor
-2. NEVER quote ROI numbers unless user provides their figures first
-3. NEVER claim certifications or partnerships not listed
-4. NEVER invent pricing outside the ranges given
-5. If unsure: "Let me have Sanele confirm — he will reach out within 24 hours"
-6. NEVER claim you can book meetings — collect details, Sanele follows up
-7. NEVER name your AI model unless directly asked
+CASE STUDY: Plumbkor PTY LTD (plumbing supply, Durban) — WhatsApp AI agent in progress.
 
-AGENTIC BEHAVIOUR (every message):
-THINK: What do I know? What is the single most valuable missing piece?
-EXTRACT: Pull any new info from the user message into context.
-RESPOND: Give genuine value first, then ask ONE focused question.
+═══════════════════════════════════════
+ANTI-HALLUCINATION RULES
+═══════════════════════════════════════
+1. Never invent case studies or results beyond Plumbkor above.
+2. Never quote ROI % unless user gives you their own numbers first.
+3. Never claim certifications, awards, or partners not listed.
+4. Never invent pricing outside the ranges given.
+5. If unsure: "Let me have Sanele confirm — he'll reach out within 24h."
+6. Never claim to book meetings yourself — collect details, Sanele follows up.
+7. Never identify your AI model unless directly asked.
 
-QUALIFICATION ORDER (natural conversation, not interrogation):
-1. Business name + what they do
-2. Industry/sector
-3. Biggest pain point — what manual task costs them most time/money
-4. Team size
-5. Current tools (spreadsheets? WhatsApp groups? paper?)
-6. Contact: WhatsApp or email
-7. Offer free 30-min discovery call with Sanele
+═══════════════════════════════════════
+BEHAVIOUR
+═══════════════════════════════════════
+Every message: THINK (what do I know / what's missing?) → EXTRACT new info → RESPOND with value + ONE question.
 
-STYLE: Warm, direct, knowledgeable. Light SA warmth ("Sawubona", "sharp") naturally. ONE question per reply at the end. Natural paragraphs — not bullet lists.
+Style: Warm, direct SA tech partner. Use "Sawubona", "sharp" sparingly. ONE question per response. Never interrogate. Give real automation insight before asking for commitment.
 
-ROI FRAMEWORKS (use with user's own numbers):
-- Manual WhatsApp: "If your team spends X hours/day on replies, a bot handles 80% automatically 24/7"
-- Data entry: "Automation saves 10-15 hours/week per staff member on manual capture"
-- Lead response: "Responding within 5 minutes converts 9x more leads — our bots reply in 3 seconds"
+ROI (use with user's own numbers only):
+- WhatsApp: bot handles 80% automatically, 24/7, no extra staff
+- Data entry: saves 10-15h/week per person
+- Lead speed: 9x more conversions responding in 3s vs 1 hour
 
-RESPONSE FORMAT — ALWAYS USE THIS EXACT STRUCTURE:
-
+═══════════════════════════════════════
+RESPONSE FORMAT — ALWAYS BOTH BLOCKS
+═══════════════════════════════════════
 <response>
-[Your reply — warm, helpful, 2-4 short paragraphs. ONE question at the end.]
+[Warm, helpful reply — 2-4 short paragraphs. ONE question at end. Write naturally, not in lists.]
 </response>
 <context>
 {
@@ -156,32 +148,29 @@ RESPONSE FORMAT — ALWAYS USE THIS EXACT STRUCTURE:
 }
 </context>
 
-CONTEXT RULES:
-- Fill any field extractable from the conversation. null for unknown.
-- qualification_stage: new|exploring|interested|ready|objecting
-- industry: plumbing|electrical|construction|healthcare|property|retail|transport|hospitality|professional|education|technology|other
-- budget_signal: high|medium|low|null (infer, never ask)
-- service_interest: automate|learn|grow|multiple|null
-- demo_booked: true only if user explicitly agreed to a call
-- referenceNumber: always "${ref}"`;
+Fill what you know, null for unknowns. Never guess.
+qualification_stage: new|exploring|interested|ready|objecting
+industry: plumbing|electrical|construction|healthcare|property|retail|transport|hospitality|professional|education|technology|other
+budget_signal: high|medium|low|null (infer, never ask)
+service_interest: automate|learn|grow|multiple|null
+demo_booked: true only if user explicitly agreed
+referenceNumber: always "${ref}"`;
 }
 
 // ════════════════════════════════════════════════════════════════════
-// RESPONSE PARSER
+// PARSER
 // ════════════════════════════════════════════════════════════════════
-function parseResponse(rawText) {
+function parseAIResponse(rawText) {
   let message = rawText;
   let context  = null;
   try {
-    const rMatch = rawText.match(/<response>([\s\S]*?)<\/response>/i);
-    if (rMatch) message = rMatch[1].trim();
-    const cMatch = rawText.match(/<context>([\s\S]*?)<\/context>/i);
-    if (cMatch) context = JSON.parse(cMatch[1].trim());
-  } catch {
-    message = rawText
-      .replace(/<response>|<\/response>/gi, '')
-      .replace(/<context>[\s\S]*?<\/context>/gi, '')
-      .trim();
+    const rm = rawText.match(/<response>([\s\S]*?)<\/response>/i);
+    if (rm) message = rm[1].trim();
+    const cm = rawText.match(/<context>([\s\S]*?)<\/context>/i);
+    if (cm) context = JSON.parse(cm[1].trim());
+  } catch (e) {
+    console.error('[InkanyeziBot] Parse error:', e.message);
+    message = rawText.replace(/<response>|<\/response>/gi,'').replace(/<context>[\s\S]*?<\/context>/gi,'').trim();
   }
   return { message, context };
 }
@@ -191,149 +180,60 @@ function parseResponse(rawText) {
 // ════════════════════════════════════════════════════════════════════
 export async function POST(request) {
   const t0 = Date.now();
-
   try {
     let body;
     try { body = await request.json(); }
-    catch {
-      return new Response(
-        JSON.stringify({ message: 'Invalid request.', context: null }),
-        { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } }
-      );
+    catch { return new Response(JSON.stringify({message:'Invalid request.',context:null}),{status:400,headers:{'Content-Type':'application/json',...CORS}}); }
+
+    const { messages=[], sessionId=`s_${Date.now()}`, context:incoming=null } = body;
+
+    if (!messages?.length) return new Response(JSON.stringify({message:'No messages.',context:null}),{status:400,headers:{'Content-Type':'application/json',...CORS}});
+
+    const userText = messages[messages.length-1]?.content?.trim()||'';
+    if (!userText) return new Response(JSON.stringify({message:'Empty.',context:incoming}),{status:400,headers:{'Content-Type':'application/json',...CORS}});
+
+    if (!process.env.GEMINI_API_KEY) {
+      console.error('[InkanyeziBot] GEMINI_API_KEY not set');
+      return new Response(JSON.stringify({message:'Configuration error. WhatsApp us: +27 65 880 4122.',context:null}),{status:500,headers:{'Content-Type':'application/json',...CORS}});
     }
 
-    const { messages = [], sessionId = `s_${Date.now()}`, context: incoming = null } = body;
+    // ── NEW SDK INIT ──────────────────────────────────────────────
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-    if (!messages.length) {
-      return new Response(
-        JSON.stringify({ message: 'No messages.', context: null }),
-        { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } }
-      );
-    }
-
-    const userText = messages[messages.length - 1]?.content?.trim() || '';
-    if (!userText) {
-      return new Response(
-        JSON.stringify({ message: 'Empty message.', context: incoming }),
-        { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } }
-      );
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error('[InkanyeziBot] GEMINI_API_KEY not set in environment');
-      return new Response(
-        JSON.stringify({ message: 'Configuration error. Please contact us: +27 65 880 4122.', context: null }),
-        { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } }
-      );
-    }
-
-    // ── Build system prompt ───────────────────────────────────────
     const systemPrompt = buildSystemPrompt(incoming, sessionId);
 
-    // ── Agentic thinking note injected into user message ──────────
-    const thinkNote = `[THINK: known=${
-      incoming
-        ? `name=${incoming.name||'?'}, stage=${incoming.qualification_stage||'new'}, hasContact=${!!(incoming.email||incoming.whatsapp)}, painPoint=${incoming.pain_point?'yes':'no'}`
-        : 'nothing yet'
-    }, nextGoal=${
-      !incoming?.name        ? 'learn name+business' :
-      !incoming?.pain_point  ? 'understand pain point' :
-      !incoming?.staff_count ? 'learn team size' :
-      (!incoming?.email&&!incoming?.whatsapp) ? 'get contact details' :
-      'confirm discovery call'
-    }] `;
+    const thinkingPrefix = `[THINK] Known: ${incoming?`name=${incoming.name||'?'},stage=${incoming.qualification_stage||'new'},pain=${incoming.pain_point?'yes':'no'},contact=${!!(incoming.email||incoming.whatsapp)?'yes':'no'}`:'nothing yet'}. Goal: ${!incoming?.name?'name+business':!incoming?.pain_point?'pain point':(!incoming?.email&&!incoming?.whatsapp)?'contact details':'discovery call'}. Hallucination check: only state facts from my briefing. [/THINK]\n\nUser: ${userText}`;
 
-    // ── Build contents (conversation history + current message) ───
-    const historyMsgs = messages.slice(0, -1).slice(-20);
-    const contents = historyMsgs
-      .filter(m => m.content?.trim())
-      .map(m => ({
-        role:  m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content.trim() }],
-      }));
+    // Build history — last 20 messages excluding current
+    const history = messages.slice(0,-1).slice(-20)
+      .map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content||'').trim()}]}))
+      .filter(m=>m.parts[0].text!=='');
 
-    // Current user message with thinking note prepended
-    contents.push({
-      role:  'user',
-      parts: [{ text: thinkNote + userText }],
-    });
+    const contents = [...history, {role:'user',parts:[{text:thinkingPrefix}]}];
 
-    // ── Gemini REST request body ──────────────────────────────────
-    const reqBody = {
-      system_instruction: {
-        parts: [{ text: systemPrompt }],
-      },
+    console.log(`[InkanyeziBot] gemini-2.5-flash | session:${sessionId} | stage:${incoming?.qualification_stage||'new'} | history:${history.length}`);
+
+    // ── API CALL using new @google/genai SDK ──────────────────────
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
       contents,
-      generationConfig: {
-        temperature:     0.4,
-        topP:            0.85,
-        topK:            40,
-        maxOutputTokens: 2048,
-        candidateCount:  1,
-        // Disable thinking for speed — chatbot does not need deep reasoning
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
+      config: {
+        systemInstruction: systemPrompt,
+        temperature:       0.4,
+        topP:              0.85,
+        topK:              40,
+        maxOutputTokens:   2048,
       },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-      ],
-    };
-
-    // ── Call Gemini REST API ──────────────────────────────────────
-    console.log(`[InkanyeziBot] ${GEMINI_MODEL} — session:${sessionId} msgs:${contents.length}`);
-    const gemRes = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(reqBody),
     });
 
-    if (!gemRes.ok) {
-      const errText = await gemRes.text();
-      console.error(`[InkanyeziBot] HTTP ${gemRes.status}:`, errText.slice(0, 600));
+    const raw = response.text;
+    console.log(`[InkanyeziBot] Done in ${Date.now()-t0}ms | ${raw?.length||0} chars`);
 
-      const statusMsgs = {
-        400: 'Invalid request. Please try rephrasing.',
-        401: 'API key rejected. Contact us: +27 65 880 4122.',
-        403: 'API access denied. Contact us: +27 65 880 4122.',
-        404: 'AI model not found. Contact us: +27 65 880 4122.',
-        429: 'Too many requests. Please try again in a moment.',
-      };
-      const userMsg = statusMsgs[gemRes.status] || 'Gemini service issue. Please try again shortly.';
+    const { message, context: extracted } = parseAIResponse(raw||'');
 
-      return new Response(
-        JSON.stringify({ message: userMsg, context: null }),
-        { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } }
-      );
-    }
-
-    const data    = await gemRes.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    if (!rawText) {
-      const finishReason = data?.candidates?.[0]?.finishReason;
-      console.error('[InkanyeziBot] Empty response, finishReason:', finishReason, JSON.stringify(data).slice(0,300));
-      const userMsg = finishReason === 'SAFETY'
-        ? "I wasn't able to respond to that. Could you rephrase it?"
-        : "I didn't get a response. Please try again.";
-      return new Response(
-        JSON.stringify({ message: userMsg, context: incoming }),
-        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } }
-      );
-    }
-
-    console.log(`[InkanyeziBot] OK in ${Date.now()-t0}ms, ${rawText.length} chars`);
-
-    // ── Parse and merge context ───────────────────────────────────
-    const { message, context: extracted } = parseResponse(rawText);
-
+    // Merge — never lose captured data
     const merged = {
-      ...(incoming  || {}),
-      ...(extracted || {}),
+      ...(incoming||{}), ...(extracted||{}),
       name:           extracted?.name           || incoming?.name           || null,
       business:       extracted?.business       || incoming?.business       || null,
       industry:       extracted?.industry       || incoming?.industry       || null,
@@ -348,23 +248,25 @@ export async function POST(request) {
       lastUpdated: new Date().toISOString(),
     };
 
-    const finalMessage = message?.trim() ||
-      "Sawubona! 👋 I'm InkanyeziBot. What does your business do, and what's the biggest challenge slowing you down right now?";
+    const final = message?.trim() || "Sawubona! 👋 I'm InkanyeziBot. What does your business do, and what's the biggest challenge slowing you down right now?";
 
-    return new Response(
-      JSON.stringify({ message: finalMessage, context: merged, sessionId }),
-      { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } }
-    );
+    return new Response(JSON.stringify({message:final,context:merged,sessionId}),{status:200,headers:{'Content-Type':'application/json',...CORS}});
 
-  } catch (err) {
-    console.error(`[InkanyeziBot] Unhandled error after ${Date.now()-t0}ms:`, err?.message);
-    console.error('[InkanyeziBot] Stack:', err?.stack?.slice(0,500));
-    return new Response(
-      JSON.stringify({
-        message: 'Something went wrong. Please try again, or reach Sanele: wa.me/27658804122',
-        context: null,
-      }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } }
-    );
+  } catch (error) {
+    console.error(`[InkanyeziBot] Error (${Date.now()-t0}ms):`, error?.message);
+    console.error('[InkanyeziBot] Stack:', error?.stack?.slice(0,500));
+
+    let msg = 'Something went wrong. Please try again or WhatsApp: +27 65 880 4122.';
+    if (error?.message) {
+      const e = error.message.toLowerCase();
+      if (e.includes('401')||e.includes('api_key')||e.includes('unauthenticated'))
+        msg = 'API key issue. Contact us: +27 65 880 4122.';
+      else if (e.includes('429')||e.includes('quota'))
+        msg = 'Very busy right now — please try again in a moment or WhatsApp: +27 65 880 4122.';
+      else if (e.includes('404')||e.includes('not found')||e.includes('model'))
+        msg = 'AI model issue. Contact us: +27 65 880 4122.';
+    }
+
+    return new Response(JSON.stringify({message:msg,context:null}),{status:500,headers:{'Content-Type':'application/json',...CORS}});
   }
 }
