@@ -305,6 +305,44 @@ export async function POST(request) {
 
     const final = message?.trim() || "Good to hear from you — what operational challenge can I help you solve today?";
 
+    // ── FIRE MAKE WEBHOOK — when conversation first completes ────────
+    // Fires only once: when conversation_complete flips from false→true
+    // Uses fire-and-forget (no await) so it never slows the user response
+    const justCompleted = merged.conversation_complete === true
+                       && incoming?.conversation_complete !== true;
+
+    if (justCompleted && process.env.MAKE_WEBHOOK_URL) {
+      const webhookPayload = {
+        name:                 merged.name             || '',
+        email:                merged.email            || '',
+        phone:                merged.whatsapp         || '',
+        company:              merged.business         || '',
+        industry:             merged.industry         || '',
+        service_interest:     merged.service_interest || '',
+        pain_point:           merged.pain_point       || '',
+        message:              merged.pain_point       || '',
+        reference_number:     merged.referenceNumber  || generateRef(merged.industry),
+        qualification_stage:  merged.qualification_stage || 'complete',
+        budget_signal:        merged.budget_signal    || '',
+        conversation_summary: messages.slice(-8)
+          .map(m => (m.role === 'user' ? 'Customer' : 'Bot') + ': ' + m.content)
+          .join('\n'),
+        session_id:           sessionId,
+        message_count:        messages.length,
+        source:               'inkanyezibot-chat',
+        timestamp:            new Date().toISOString(),
+        sast_time:            new Date().toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }),
+      };
+      // Fire-and-forget — do not await, do not block user response
+      fetch(process.env.MAKE_WEBHOOK_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(webhookPayload),
+      }).catch(err => console.error('[InkanyeziBot] Webhook error:', err.message));
+      console.log('[InkanyeziBot] Webhook fired for session:', sessionId, '| ref:', webhookPayload.reference_number);
+    }
+    // ─────────────────────────────────────────────────────────────────
+
     return new Response(JSON.stringify({message:final,context:merged,sessionId}),{status:200,headers:{'Content-Type':'application/json',...CORS}});
 
   } catch (error) {
