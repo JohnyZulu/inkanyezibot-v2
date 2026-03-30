@@ -79,15 +79,9 @@ function buildSystemPrompt(context, sessionId, messageCount) {
   } else if (!hasPain) {
     stage = 'STAGE 1 — PAIN DISCOVERY';
     stageInstruction = `${hasName ? `You know their name is ${context.name}.` : ''} The contact form captured their basic details. Now your ONLY goal is to understand their biggest operational pain point — what manual task or process is costing them the most time or money. Ask ONE specific question about this. Do NOT ask for their name, email, or phone again.`;
-  } else if (!hasTeamSize) {
-    stage = 'STAGE 2 — QUALIFY';
-    stageInstruction = `You know their pain point. Now ask about their team size so you can scope the right solution. One sentence, one question. Do NOT repeat or rephrase anything you already know.`;
-  } else if (!context?.service_interest) {
-    stage = 'STAGE 3 — SOLUTION MATCH';
-    stageInstruction = `You have enough to match them to a service. Tell them in ONE sentence which of our 3 services fits their situation and why. Then confirm that Sanele will reach out to ${context?.whatsapp ? `their WhatsApp (${context.whatsapp})` : context?.email ? `their email (${context.email})` : 'them'} within 24 hours. Set context: conversation_complete = true.`;
   } else {
-    stage = 'STAGE 4 — CLOSE';
-    stageInstruction = `The solution has been matched. Wrap up warmly. Tell them their reference number is ${ref} and Sanele will be in touch within 24 hours. Do NOT ask any more questions unless they ask you something first. Set context: conversation_complete = true.`;
+    stage = 'STAGE 2 — SOLUTION MATCH & CLOSE';
+    stageInstruction = `You know their pain point. In ONE sentence name which of our 3 services fits their situation and why. Then tell them: "Your reference is ${ref} — Sanele will personally reach out within 24 hours." Set context: service_interest and conversation_complete = true. Do NOT ask any more questions.`;
   }
 
   return `You are InkanyeziBot — AI sales assistant for Inkanyezi Technologies, a Durban-based AI automation consultancy for South African SMEs.
@@ -305,9 +299,7 @@ export async function POST(request) {
 
     const final = message?.trim() || "Good to hear from you — what operational challenge can I help you solve today?";
 
-    // ── FIRE MAKE WEBHOOK — when conversation first completes ────────
-    // Fires only once: when conversation_complete flips from false→true
-    // Uses fire-and-forget (no await) so it never slows the user response
+    // ── FIRE MAKE WEBHOOK — once when conversation first completes ──
     const justCompleted = merged.conversation_complete === true
                        && incoming?.conversation_complete !== true;
 
@@ -333,15 +325,13 @@ export async function POST(request) {
         timestamp:            new Date().toISOString(),
         sast_time:            new Date().toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }),
       };
-      // Fire-and-forget — do not await, do not block user response
       fetch(process.env.MAKE_WEBHOOK_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(webhookPayload),
       }).catch(err => console.error('[InkanyeziBot] Webhook error:', err.message));
-      console.log('[InkanyeziBot] Webhook fired for session:', sessionId, '| ref:', webhookPayload.reference_number);
+      console.log('[InkanyeziBot] Webhook fired | session:', sessionId, '| ref:', webhookPayload.reference_number);
     }
-    // ─────────────────────────────────────────────────────────────────
 
     return new Response(JSON.stringify({message:final,context:merged,sessionId}),{status:200,headers:{'Content-Type':'application/json',...CORS}});
 
