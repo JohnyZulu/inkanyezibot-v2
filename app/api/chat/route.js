@@ -304,8 +304,11 @@ export async function POST(request) {
                        && incoming?.conversation_complete !== true;
 
     if (justCompleted && process.env.MAKE_WEBHOOK_URL) {
+      // Ensure ref is always the stable one from context, never blank
+      const stableRef = merged.referenceNumber || incoming?.referenceNumber || generateRef(merged.industry);
+
       const webhookPayload = {
-        name:                 merged.name             || '',
+        name:                 merged.name             || messages.find(m=>m.role==='user')?.content?.split(' ')[0] || 'Unknown',
         email:                merged.email            || '',
         phone:                merged.whatsapp         || '',
         company:              merged.business         || '',
@@ -313,7 +316,7 @@ export async function POST(request) {
         service_interest:     merged.service_interest || '',
         pain_point:           merged.pain_point       || '',
         message:              merged.pain_point       || '',
-        reference_number:     merged.referenceNumber  || generateRef(merged.industry),
+        reference_number:     stableRef,
         qualification_stage:  merged.qualification_stage || 'complete',
         budget_signal:        merged.budget_signal    || '',
         conversation_summary: messages.slice(-8)
