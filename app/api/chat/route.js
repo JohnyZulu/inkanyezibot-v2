@@ -1,9 +1,9 @@
 // ════════════════════════════════════════════════════════════════════
-// INKANYEZI AI BRAIN — app/api/chat/route.js
-// SDK:     @google/genai  (new unified SDK — required for gemini 2.5+)
-// Model:   gemini-2.5-flash  (current stable production model)
-// Tokens:  2048 output — fixes truncation
-// Temp:    0.4 — grounded, anti-hallucination
+// INKANYEZI AI BRAIN — app/api/chat/route.js  v8
+// SDK:     @google/genai
+// Model:   gemini-2.5-flash
+// Changes: Stable ref generation, guaranteed webhook payload,
+//          name captured from first user message as fallback
 // ════════════════════════════════════════════════════════════════════
 
 import { GoogleGenAI } from '@google/genai';
@@ -18,7 +18,7 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
-// ── HELPERS ───────────────────────────────────────────────────────────
+// ── HELPERS ──────────────────────────────────────────────────────────
 const INDUSTRY_CODES = {
   plumbing:'PLB', electrical:'ELC', construction:'CON',
   healthcare:'HLT', property:'PRP', retail:'RTL',
@@ -41,14 +41,31 @@ function getSATime() {
   });
 }
 
-// ════════════════════════════════════════════════════════════════════
-// SYSTEM PROMPT — STAGED CONVERSATION WITH FULL GUARDRAILS
-// ════════════════════════════════════════════════════════════════════
-function buildSystemPrompt(context, sessionId, messageCount) {
-  const saTime = getSATime();
-  const ref    = context?.referenceNumber || generateRef(context?.industry);
+// ── EXTRACT REAL NAME from message history ───────────────────────────
+// Looks for "I am X", "my name is X", "this is X" patterns
+// Falls back to first word of first user message
+function extractNameFromMessages(messages) {
+  const namePatterns = [
+    /(?:i(?:'?m| am)|my name is|this is|call me)\s+([A-Z][a-z]+)/i,
+    /^([A-Z][a-z]+)\s+(?:here|speaking)/i,
+  ];
+  for (const msg of messages.filter(m => m.role === 'user')) {
+    for (const pattern of namePatterns) {
+      const match = msg.content?.match(pattern);
+      if (match && match[1] && match[1].length > 2) return match[1];
+    }
+  }
+  // Final fallback: first word of first user message if it looks like a name
+  const firstWord = messages.find(m => m.role === 'user')?.content?.trim()?.split(/\s+/)[0] || '';
+  return firstWord.length > 2 && /^[A-Za-z]+$/.test(firstWord) ? firstWord : 'there';
+}
 
-  // Build explicit "already captured" block — bot must never re-ask these
+// ════════════════════════════════════════════════════════════════════
+// SYSTEM PROMPT
+// ════════════════════════════════════════════════════════════════════
+function buildSystemPrompt(context, sessionId, messageCount, stableRef) {
+  const saTime = getSATime();
+
   const captured = [];
   if (context?.name)          captured.push(`name (${context.name})`);
   if (context?.business)      captured.push(`business (${context.business})`);
@@ -64,30 +81,26 @@ function buildSystemPrompt(context, sessionId, messageCount) {
     ? `ALREADY CAPTURED — NEVER ASK FOR THESE AGAIN: ${captured.join(', ')}`
     : `Nothing captured yet.`;
 
-  // Determine conversation stage based on what we know and message count
-  const hasContact   = !!(context?.email || context?.whatsapp);
-  const hasName      = !!context?.name;
-  const hasPain      = !!context?.pain_point;
-  const hasTeamSize  = !!context?.staff_count;
-  const isComplete   = context?.conversation_complete === true;
+  const hasPain    = !!context?.pain_point;
+  const isComplete = context?.conversation_complete === true;
 
   let stage, stageInstruction;
 
   if (isComplete) {
     stage = 'COMPLETE';
-    stageInstruction = `The lead has been fully qualified and handed to Sanele. Your ONLY job now is to answer any remaining questions the user has. Do NOT ask any more qualification questions. Do NOT re-introduce yourself. Do NOT greet again. If they have no more questions, say a warm goodbye and let them know Sanele will be in touch.`;
+    stageInstruction = `Lead fully qualified. ONLY answer remaining questions. Do NOT ask qualification questions. Say a warm goodbye if they have nothing else.`;
   } else if (!hasPain) {
     stage = 'STAGE 1 — PAIN DISCOVERY';
-    stageInstruction = `${hasName ? `You know their name is ${context.name}.` : ''} The contact form captured their basic details. Now your ONLY goal is to understand their biggest operational pain point — what manual task or process is costing them the most time or money. Ask ONE specific question about this. Do NOT ask for their name, email, or phone again.`;
+    stageInstruction = `${context?.name ? `You know their name is ${context.name}.` : ''} Ask ONE focused question: what is the single biggest manual task or process costing their business the most time or money right now? Do NOT ask for name, email, or phone.`;
   } else {
     stage = 'STAGE 2 — SOLUTION MATCH & CLOSE';
-    stageInstruction = `You know their pain point. In ONE sentence name which of our 3 services fits their situation and why. Then tell them: "Your reference is ${ref} — Sanele will personally reach out within 24 hours." Set context: service_interest and conversation_complete = true. Do NOT ask any more questions.`;
+    stageInstruction = `You know their pain point. In ONE sentence tell them which of our 3 services fits their situation and exactly why. Then say: "Your reference is ${stableRef} — Sanele will personally reach out within 24 hours." Set conversation_complete = true and set service_interest. Do NOT ask any further questions.`;
   }
 
   return `You are InkanyeziBot — AI sales assistant for Inkanyezi Technologies, a Durban-based AI automation consultancy for South African SMEs.
 
 SA TIME: ${saTime}
-SESSION: ${sessionId} | REF: ${ref}
+SESSION: ${sessionId} | REF: ${stableRef}
 MESSAGE COUNT: ${messageCount}
 CURRENT STAGE: ${stage}
 
@@ -103,16 +116,16 @@ GUARDRAILS — THESE OVERRIDE EVERYTHING
 2. NEVER ask for any information listed in ALREADY CAPTURED above.
 3. NEVER ask more than ONE question per response.
 4. NEVER re-ask a question you asked in the previous message.
-5. If the user goes off-topic (jokes, general chat), answer briefly then steer back with ONE question.
-6. If the user asks to stop or says goodbye, respond warmly, confirm Sanele will follow up, and end.
-7. Maximum 3 sentences per response. No exceptions. Cut anything extra.
+5. If the user goes off-topic, answer briefly then steer back with ONE question.
+6. If the user asks to stop or says goodbye, confirm Sanele will follow up and end.
+7. Maximum 3 sentences per response. No exceptions.
 
 ═══════════════════════════════════════
 COMPANY FACTS — USE ONLY THESE
 ═══════════════════════════════════════
 Company: Inkanyezi Technologies
 Founder: Sanele (24h personal follow-up, Durban KZN)
-WhatsApp: +27 65 880 4122 | Email: sishangesanele@gmail.com
+WhatsApp: +27 65 880 4122 | Email: inkanyeziaisolutions3@gmail.com
 Tagline: "We are the signal in the noise"
 
 SERVICES (only these 3):
@@ -125,44 +138,29 @@ NOT offered: mobile apps, general web design, unrelated IT support.
 CASE STUDY: Plumbkor PTY LTD (plumbing supply, Durban) — WhatsApp AI agent, in progress.
 
 ANTI-HALLUCINATION: Never invent results, case studies, ROI %, certifications, or pricing outside the ranges above.
-If unsure about anything: "Let me have Sanele confirm that — he'll be in touch within 24 hours."
+If unsure: "Let me have Sanele confirm that — he will be in touch within 24 hours."
 
 ═══════════════════════════════════════
 MULTILINGUAL — SOUTH AFRICAN IDENTITY
 ═══════════════════════════════════════
 You are fluent in isiZulu, Afrikaans, and English. MATCH THE LANGUAGE THE USER WRITES IN.
-- If they write in isiZulu → reply fully in isiZulu
-- If they write in Afrikaans → reply fully in Afrikaans
-- If they write in English → reply in English
-- If they mix languages (code-switch) → mirror their mix naturally
-- Always greet new conversations with "Sawubona!" (isiZulu for "I see you/hello")
+- isiZulu written → reply fully in isiZulu
+- Afrikaans written → reply fully in Afrikaans
+- English written → reply in English
+- Mixed (code-switch) → mirror their mix naturally
+- Always greet NEW conversations with "Sawubona!"
 
-KEY ZULU PHRASES TO USE NATURALLY:
-- Sawubona = Hello / I see you (greeting)
-- Ngiyabonga = Thank you
-- Kulungile = OK / Alright
-- Ngiyakuzwa = I understand / I hear you
-- Hamba kahle = Go well (farewell)
-- Siyabonga = We thank you
-- Inkanyezi = Star (our brand name)
-- Sharp sharp = SA slang for "great/understood" (use naturally)
-- Eish = SA expression of surprise/concern (use sparingly)
+KEY ZULU PHRASES: Sawubona (hello), Ngiyabonga (thank you), Kulungile (OK),
+Ngiyakuzwa (I understand), Hamba kahle (go well), Sharp sharp (great/understood), Eish (surprise/concern).
 
-KEY AFRIKAANS PHRASES:
-- Goeie dag / Hallo = Hello
-- Baie dankie = Thank you very much
-- Verstaan = Understand
-- Totsiens = Goodbye
-- Lekker = Great/Nice (SA slang)
-- Geen probleem = No problem
-- Besigheid = Business
-- Werkers = Workers/Staff
+KEY AFRIKAANS PHRASES: Goeie dag (hello), Baie dankie (thank you), Totsiens (goodbye), Lekker (great).
 
-SA CULTURAL CONTEXT: You understand the SA business landscape — load shedding (Eskom), township economy, Durban/KZN context, Ubuntu philosophy ("I am because we are"), and that most SA SMEs run lean with 1–20 staff. Reference these naturally when relevant.
+SA CULTURAL CONTEXT: Understand load shedding, township economy, Ubuntu philosophy, Durban/KZN context.
+Most SA SMEs run lean with 1-20 staff.
 
-ROI FRAMEWORKS (use ONLY with user's own numbers):
+ROI FRAMEWORKS (only use with user's own numbers):
 - WhatsApp: "A bot handles 80% of queries automatically, 24/7, no extra staff needed."
-- Data entry: "Automation typically saves 10–15 hours/week per person on manual capture."
+- Data entry: "Automation typically saves 10-15 hours/week per person on manual capture."
 - Lead response: "Responding in under 3 seconds converts 9x more leads than responding in an hour."
 
 ═══════════════════════════════════════
@@ -185,25 +183,23 @@ RESPONSE FORMAT — ALWAYS RETURN BOTH BLOCKS
   "qualification_stage": "new",
   "demo_booked": false,
   "conversation_complete": false,
-  "referenceNumber": "${ref}",
+  "referenceNumber": "${stableRef}",
   "service_interest": null,
   "notes": null
 }
 </context>
 
 CONTEXT RULES:
-- Preserve all previously captured values — never set a captured field back to null.
-- qualification_stage: new | exploring | interested | ready | objecting | complete
+- Preserve ALL previously captured values — NEVER set a captured field back to null.
+- referenceNumber: ALWAYS "${stableRef}" — never change, never generate a new one.
+- qualification_stage: new | exploring | interested | ready | complete
 - industry: plumbing | electrical | construction | healthcare | property | retail | transport | hospitality | professional | education | technology | other
 - budget_signal: high | medium | low | null — infer from language, never ask directly
 - service_interest: automate | learn | grow | multiple | null
-- conversation_complete: set to true when Sanele follow-up is confirmed and no more questions needed
-- referenceNumber: always "${ref}" — never change`;
+- conversation_complete: set to true ONLY when you have given them the ref number and confirmed Sanele will follow up`;
 }
 
-// ════════════════════════════════════════════════════════════════════
-// PARSER
-// ════════════════════════════════════════════════════════════════════
+// ── PARSER ────────────────────────────────────────────────────────────
 function parseAIResponse(rawText) {
   let message = rawText;
   let context  = null;
@@ -241,25 +237,25 @@ export async function POST(request) {
       return new Response(JSON.stringify({message:'Configuration error. WhatsApp us: +27 65 880 4122.',context:null}),{status:500,headers:{'Content-Type':'application/json',...CORS}});
     }
 
-    // ── NEW SDK INIT ──────────────────────────────────────────────
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    // ── STABLE REF — generated ONCE per session, never changes ───────
+    // Use existing ref from context, else generate a new one for this session
+    const stableRef = incoming?.referenceNumber || generateRef(incoming?.industry);
 
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const msgCount     = messages.length;
-    const systemPrompt = buildSystemPrompt(incoming, sessionId, msgCount);
+    const systemPrompt = buildSystemPrompt(incoming, sessionId, msgCount, stableRef);
 
     const formShown = !!(incoming?.name || incoming?.email);
-    const thinkingPrefix = `[THINK] Known: ${incoming?`name=${incoming.name||'?'},stage=${incoming.qualification_stage||'new'},pain=${incoming.pain_point?'yes':'no'}`:'nothing yet'}. Form captured contact: ${formShown?'YES — never ask for name/email/phone again':'NO — first message, be warm, form shows after this'}. My job: ${!incoming?.name?'Acknowledge warmly in 2 sentences max, the form will capture contact details':'Ask about '+(!incoming?.pain_point?'their specific pain point':!incoming?.staff_count?'team size':'next steps')+' in ONE focused sentence'}. MAX 3 SENTENCES TOTAL. [/THINK]\n\nUser: ${userText}`;
+    const thinkingPrefix = `[THINK] Known: name=${incoming?.name||'?'}, pain=${incoming?.pain_point?'yes':'no'}, stage=${incoming?.qualification_stage||'new'}. Form captured contact: ${formShown?'YES':'NO'}. MAX 3 SENTENCES. [/THINK]\n\nUser: ${userText}`;
 
-    // Build history — last 20 messages excluding current
     const history = messages.slice(0,-1).slice(-20)
       .map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content||'').trim()}]}))
       .filter(m=>m.parts[0].text!=='');
 
     const contents = [...history, {role:'user',parts:[{text:thinkingPrefix}]}];
 
-    console.log(`[InkanyeziBot] gemini-2.5-flash | session:${sessionId} | stage:${incoming?.qualification_stage||'new'} | history:${history.length}`);
+    console.log(`[InkanyeziBot] gemini-2.5-flash | session:${sessionId} | ref:${stableRef} | stage:${incoming?.qualification_stage||'new'} | msgs:${msgCount}`);
 
-    // ── API CALL using new @google/genai SDK ──────────────────────
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents,
@@ -277,7 +273,7 @@ export async function POST(request) {
 
     const { message, context: extracted } = parseAIResponse(raw||'');
 
-    // Merge — never lose captured data
+    // ── MERGE — never lose captured data, always keep stableRef ─────
     const merged = {
       ...(incoming||{}), ...(extracted||{}),
       name:           extracted?.name           || incoming?.name           || null,
@@ -290,25 +286,24 @@ export async function POST(request) {
       whatsapp:       extracted?.whatsapp       || incoming?.whatsapp       || null,
       budget_signal:  extracted?.budget_signal  || incoming?.budget_signal  || null,
       service_interest: extracted?.service_interest || incoming?.service_interest || null,
-      // conversation_complete is sticky — once true, stays true
       conversation_complete: extracted?.conversation_complete || incoming?.conversation_complete || false,
-      referenceNumber: incoming?.referenceNumber || extracted?.referenceNumber,
+      referenceNumber: stableRef, // always use the stable ref, never extracted one
       sessionId,
       lastUpdated: new Date().toISOString(),
     };
 
     const final = message?.trim() || "Good to hear from you — what operational challenge can I help you solve today?";
 
-    // ── FIRE MAKE WEBHOOK — once when conversation first completes ──
+    // ── FIRE MAKE WEBHOOK — once when conversation first completes ───
     const justCompleted = merged.conversation_complete === true
                        && incoming?.conversation_complete !== true;
 
     if (justCompleted && process.env.MAKE_WEBHOOK_URL) {
-      // Ensure ref is always the stable one from context, never blank
-      const stableRef = merged.referenceNumber || incoming?.referenceNumber || generateRef(merged.industry);
+      // Resolve name: context > pattern match > fallback
+      const resolvedName = merged.name || extractNameFromMessages(messages) || 'Unknown';
 
       const webhookPayload = {
-        name:                 merged.name             || messages.find(m=>m.role==='user')?.content?.split(' ')[0] || 'Unknown',
+        name:                 resolvedName,
         email:                merged.email            || '',
         phone:                merged.whatsapp         || '',
         company:              merged.business         || '',
@@ -317,10 +312,10 @@ export async function POST(request) {
         pain_point:           merged.pain_point       || '',
         message:              merged.pain_point       || '',
         reference_number:     stableRef,
-        qualification_stage:  merged.qualification_stage || 'complete',
+        qualification_stage:  'complete',
         budget_signal:        merged.budget_signal    || '',
-        conversation_summary: messages.slice(-8)
-          .map(m => (m.role === 'user' ? 'Customer' : 'Bot') + ': ' + m.content)
+        conversation_summary: messages.slice(-10)
+          .map(m => (m.role === 'user' ? 'Customer' : 'Bot') + ': ' + (m.content||'').replace(/\n/g,' '))
           .join('\n'),
         session_id:           sessionId,
         message_count:        messages.length,
@@ -328,12 +323,14 @@ export async function POST(request) {
         timestamp:            new Date().toISOString(),
         sast_time:            new Date().toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }),
       };
+
       fetch(process.env.MAKE_WEBHOOK_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(webhookPayload),
       }).catch(err => console.error('[InkanyeziBot] Webhook error:', err.message));
-      console.log('[InkanyeziBot] Webhook fired | session:', sessionId, '| ref:', webhookPayload.reference_number);
+
+      console.log('[InkanyeziBot] Webhook fired | ref:', stableRef, '| name:', resolvedName, '| session:', sessionId);
     }
 
     return new Response(JSON.stringify({message:final,context:merged,sessionId}),{status:200,headers:{'Content-Type':'application/json',...CORS}});
@@ -352,7 +349,6 @@ export async function POST(request) {
       else if (e.includes('404')||e.includes('not found')||e.includes('model'))
         msg = 'AI model issue. Contact us: +27 65 880 4122.';
     }
-
     return new Response(JSON.stringify({message:msg,context:null}),{status:500,headers:{'Content-Type':'application/json',...CORS}});
   }
 }
