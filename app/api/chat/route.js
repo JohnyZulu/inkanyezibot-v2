@@ -82,19 +82,21 @@ function buildSystemPrompt(context, sessionId, messageCount, stableRef) {
     : `Nothing captured yet.`;
 
   const hasPain    = !!context?.pain_point;
-  const isComplete = context?.conversation_complete === true;
+  const isComplete = context?.conversation_complete === true || messageCount > 6;
 
   let stage, stageInstruction;
 
   if (isComplete) {
     stage = 'COMPLETE';
-    stageInstruction = `Lead fully qualified. ONLY answer remaining questions. Do NOT ask qualification questions. Say a warm goodbye if they have nothing else.`;
-  } else if (!hasPain) {
+    stageInstruction = `Conversation done. Say a brief warm goodbye only if the user says goodbye. If they ask a question, answer it in ONE sentence. NEVER ask any more questions.`;
+  } else if (!hasPain && messageCount <= 2) {
     stage = 'STAGE 1 — PAIN DISCOVERY';
-    stageInstruction = `${context?.name ? `You know their name is ${context.name}.` : ''} Ask ONE focused question: what is the single biggest manual task or process costing their business the most time or money right now? Do NOT ask for name, email, or phone.`;
+    stageInstruction = `${context?.name ? `You know their name is ${context.name}.` : ''} The user just described their business. Acknowledge it warmly in ONE sentence, then ask ONE focused question: "What is the single biggest challenge costing your business the most time or money right now?" Do NOT ask for name, email, phone. Do NOT ask about specifics or drill deeper.`;
   } else {
-    stage = 'STAGE 2 — SOLUTION MATCH & CLOSE';
-    stageInstruction = `You know their pain point. In ONE sentence tell them which of our 3 services fits their situation and exactly why. Then say: "Your reference is ${stableRef} — Sanele will personally reach out within 24 hours." Set conversation_complete = true and set service_interest. Do NOT ask any further questions.`;
+    // messageCount > 2 OR pain_point captured — close immediately
+    stage = 'STAGE 2 — CLOSE';
+    const painSummary = context?.pain_point || 'their operational challenges';
+    stageInstruction = `You have their pain point. Do NOT ask any more questions. In ONE sentence match them to our best service (AUTOMATE if they mentioned manual tasks/data/WhatsApp/workflows, LEARN if they mentioned staff skills/AI literacy, GROW if they mentioned strategy/growth). Then: "Your reference is ${stableRef} — Sanele will personally reach out within 24 hours." Then set conversation_complete = true and service_interest.`;
   }
 
   return `You are InkanyeziBot — AI sales assistant for Inkanyezi Technologies, a Durban-based AI automation consultancy for South African SMEs.
@@ -110,15 +112,17 @@ STAGE INSTRUCTION (follow this exactly):
 ${stageInstruction}
 
 ═══════════════════════════════════════
-GUARDRAILS — THESE OVERRIDE EVERYTHING
+GUARDRAILS — ABSOLUTE RULES
 ═══════════════════════════════════════
-1. NEVER greet with "Sawubona" or re-introduce yourself after the first message.
-2. NEVER ask for any information listed in ALREADY CAPTURED above.
-3. NEVER ask more than ONE question per response.
-4. NEVER re-ask a question you asked in the previous message.
-5. If the user goes off-topic, answer briefly then steer back with ONE question.
-6. If the user asks to stop or says goodbye, confirm Sanele will follow up and end.
-7. Maximum 3 sentences per response. No exceptions.
+1. NEVER greet or re-introduce yourself after the very first message.
+2. NEVER ask for name, email, or phone — the form captures that.
+3. ONE question maximum per response — never two.
+4. NEVER ask a follow-up or drill deeper — one answer is enough to move on.
+5. NEVER ask about hours, team size, budget, or process specifics.
+6. By MESSAGE 3, you MUST be in Stage 2 closing — no more questions.
+7. If the user says "no thanks", "goodbye", or submits the form — STOP asking questions.
+8. Maximum 2 sentences per response. Cut everything else.
+9. NEVER output JSON, context blocks, or code in your response.
 
 ═══════════════════════════════════════
 COMPANY FACTS — USE ONLY THESE
@@ -167,7 +171,7 @@ ROI FRAMEWORKS (only use with user's own numbers):
 RESPONSE FORMAT — ALWAYS RETURN BOTH BLOCKS
 ═══════════════════════════════════════
 <response>
-[MAX 3 SENTENCES TOTAL. Follow stage instruction exactly. No padding.]
+[MAX 2 SENTENCES. Follow stage instruction exactly. NO padding. NO JSON. NO context block.]
 </response>
 <context>
 {
@@ -246,7 +250,7 @@ export async function POST(request) {
     const systemPrompt = buildSystemPrompt(incoming, sessionId, msgCount, stableRef);
 
     const formShown = !!(incoming?.name || incoming?.email);
-    const thinkingPrefix = `[THINK] Known: name=${incoming?.name||'?'}, pain=${incoming?.pain_point?'yes':'no'}, stage=${incoming?.qualification_stage||'new'}. Form captured contact: ${formShown?'YES':'NO'}. MAX 3 SENTENCES. [/THINK]\n\nUser: ${userText}`;
+    const thinkingPrefix = `User: ${userText}`;
 
     const history = messages.slice(0,-1).slice(-20)
       .map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content||'').trim()}]}))
