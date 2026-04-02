@@ -23,12 +23,7 @@ const INV_CLR      : Record<string,string> = { 'Not Sent':'#6b7280', Sent:'#378a
 const SVC_CLR      : Record<string,string> = { automate:'#378add', learn:'#3d9e6e', grow:'#ef9f27', multiple:'#9b6fc8' };
 const SVC_LABEL    : Record<string,string> = { automate:'Automate', learn:'Learn', grow:'Grow', multiple:'Multiple' };
 
-const C = {
-  bg:'#060e1d', card:'#0d1e35', card2:'#0a1828',
-  border:'rgba(244,185,66,0.12)', borderHover:'rgba(244,185,66,0.3)',
-  gold:'#F4B942', orange:'#FF6B35', text:'#e8eaf0',
-  muted:'rgba(232,234,240,0.45)', dimmed:'rgba(232,234,240,0.2)',
-};
+const C_GOLD = '#F4B942'; // used in theme before C is defined
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const ini = (n:string) => { const p=n.trim().split(' '); return (p.length>1?p[0][0]+p[1][0]:n.substring(0,2)).toUpperCase(); };
@@ -67,19 +62,19 @@ const ProgressBar = ({value,color,height=5}:{value:number,color:string,height?:n
 const Stat = ({label,value,sub,accent}:{label:string,value:string|number,sub:string,accent:string}) => (
   <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:'18px 20px',borderTop:`3px solid ${accent}`}}>
     <div style={{fontSize:10,color:C.muted,letterSpacing:'0.1em',textTransform:'uppercase',marginBottom:8}}>{label}</div>
-    <div style={{fontSize:28,fontWeight:700,color:'#fff',fontFamily:"'Playfair Display',Georgia,serif"}}>{value}</div>
+    <div style={{fontSize:28,fontWeight:700,color:C.text,fontFamily:"'Playfair Display',Georgia,serif"}}>{value}</div>
     <div style={{fontSize:11,color:accent,marginTop:4}}>{sub}</div>
   </div>
 );
 
 const Inp = ({value,onChange,placeholder,type='text',style={}}:{value:string,onChange:(v:string)=>void,placeholder?:string,type?:string,style?:React.CSSProperties}) => (
   <input type={type} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)}
-    style={{width:'100%',background:'rgba(255,255,255,0.04)',border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',...style}}/>
+    style={{width:'100%',background:C.inputBg,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',...style}}/>
 );
 
 const Sel = ({value,onChange,options,style={}}:{value:string,onChange:(v:string)=>void,options:{v:string,l:string}[],style?:React.CSSProperties}) => (
   <select value={value} onChange={e=>onChange(e.target.value)}
-    style={{width:'100%',background:'#0d1e35',border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',...style}}>
+    style={{width:'100%',background:C.selBg,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',...style}}>
     {options.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
   </select>
 );
@@ -95,7 +90,27 @@ export default function Dashboard() {
   const [addOpen, setAddOpen] = useState(false);
   const [newLead, setNewLead] = useState<Lead>(blank());
   const [source,  setSource]  = useState('');
+  const [dark,     setDark]    = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Dynamic theme based on dark/light mode ────────────────────────────────
+  const C = dark ? {
+    bg:'#060e1d', card:'#0d1e35', card2:'#0a1828',
+    border:'rgba(244,185,66,0.12)', borderHover:'rgba(244,185,66,0.3)',
+    gold:'#F4B942', orange:'#FF6B35', text:'#e8eaf0',
+    muted:'rgba(232,234,240,0.5)', dimmed:'rgba(232,234,240,0.25)',
+    sidebar:'rgba(6,14,29,0.97)', headerBg:'#0a1628',
+    inputBg:'rgba(255,255,255,0.04)', tableBg:'#0d1e35',
+    selBg:'#0d1e35', statBorder:C_GOLD,
+  } : {
+    bg:'#f0f2f7', card:'#ffffff', card2:'#f8f9fc',
+    border:'rgba(10,22,40,0.12)', borderHover:'rgba(244,185,66,0.5)',
+    gold:'#c9941a', orange:'#e55a1c', text:'#0A1628',
+    muted:'rgba(10,22,40,0.5)', dimmed:'rgba(10,22,40,0.3)',
+    sidebar:'rgba(10,22,40,0.97)', headerBg:'#ffffff',
+    inputBg:'rgba(10,22,40,0.04)', tableBg:'#ffffff',
+    selBg:'#ffffff', statBorder:C_GOLD,
+  };
 
   const load = useCallback(async()=>{
     setLoading(true);
@@ -186,7 +201,7 @@ export default function Dashboard() {
       </svg>
 
       {/* ── SIDEBAR ────────────────────────────────────────────────────────── */}
-      <aside style={{width:220,flexShrink:0,background:'rgba(6,14,29,0.97)',borderRight:`1px solid ${C.border}`,zIndex:100,display:'flex',flexDirection:'column',height:'100vh',position:'relative'}}>
+      <aside style={{width:220,flexShrink:0,background:C.sidebar,borderRight:`1px solid ${C.border}`,zIndex:100,display:'flex',flexDirection:'column',height:'100vh',position:'relative'}}>
 
         {/* Brand */}
         <div style={{padding:'24px 20px 20px',borderBottom:`1px solid ${C.border}`}}>
@@ -246,7 +261,22 @@ export default function Dashboard() {
               </h1>
               <p style={{fontSize:12,color:C.muted,margin:'5px 0 0'}}>{new Date().toLocaleDateString('en-ZA',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</p>
             </div>
-            <button onClick={load} style={{background:'transparent',border:`1px solid ${C.border}`,color:C.muted,padding:'7px 16px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>↻ Refresh</button>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              {/* Light/Dark toggle */}
+              <button onClick={()=>setDark(d=>!d)} title={dark?'Switch to light mode':'Switch to dark mode'} style={{
+                background:dark?'rgba(244,185,66,0.1)':'rgba(10,22,40,0.08)',
+                border:`1px solid ${C.border}`,
+                color:dark?C.gold:C.text,
+                padding:'7px 14px',borderRadius:8,cursor:'pointer',
+                fontSize:13,fontFamily:'inherit',
+                display:'flex',alignItems:'center',gap:6,
+                transition:'all 0.2s',
+              }}>
+                <span style={{fontSize:14}}>{dark?'☀':'🌙'}</span>
+                <span style={{fontSize:11}}>{dark?'Light':'Dark'}</span>
+              </button>
+              <button onClick={load} style={{background:'transparent',border:`1px solid ${C.border}`,color:C.muted,padding:'7px 16px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>↻ Refresh</button>
+            </div>
           </div>
 
           {loading ? (
@@ -267,10 +297,29 @@ export default function Dashboard() {
 
                 {/* KPIs */}
                 <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}}>
-                  <Stat label="Total Leads"    value={total}         sub="all time"          accent={C.gold}/>
-                  <Stat label="Active"         value={active}        sub="in pipeline"       accent="#378add"/>
-                  <Stat label="Won"            value={won}           sub={`${conversion}% conversion`} accent="#3d9e6e"/>
-                  <Stat label="Revenue Paid"   value={fmt(paidInv)}  sub={`R${totalInv.toLocaleString()} pipeline`} accent={C.orange}/>
+                  {[
+                    {label:'Total Leads',  value:total,        sub:'all time',                           accent:C.gold,    nav:'leads'    },
+                    {label:'Active',       value:active,       sub:'in pipeline',                        accent:'#378add', nav:'kanban'   },
+                    {label:'Won',          value:won,          sub:`${conversion}% conversion`,          accent:'#3d9e6e', nav:'projects' },
+                    {label:'Revenue Paid', value:fmt(paidInv), sub:`R${totalInv.toLocaleString()} pipeline`, accent:C.orange,  nav:'revenue'  },
+                  ].map(k=>(
+                    <button key={k.label} onClick={()=>navTo(k.nav as View)} style={{
+                      all:'unset',cursor:'pointer',display:'block',width:'100%',
+                      background:C.card,border:`1px solid ${C.border}`,borderRadius:12,
+                      padding:'18px 20px',borderTop:`3px solid ${k.accent}`,
+                      transition:'border-color 0.2s, transform 0.15s',
+                      textAlign:'left',
+                    }}
+                    onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.borderColor=k.accent;(e.currentTarget as HTMLElement).style.transform='translateY(-2px)';}}
+                    onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.borderColor=C.border;(e.currentTarget as HTMLElement).style.transform='translateY(0)';}}
+                    >
+                      <div style={{fontSize:10,color:C.muted,letterSpacing:'0.1em',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                        {k.label}<span style={{fontSize:9,color:k.accent,opacity:0.7}}>→</span>
+                      </div>
+                      <div style={{fontSize:28,fontWeight:700,color:C.text,fontFamily:"'Playfair Display',Georgia,serif"}}>{k.value}</div>
+                      <div style={{fontSize:11,color:k.accent,marginTop:4}}>{k.sub}</div>
+                    </button>
+                  ))}
                 </div>
 
                 {/* Charts row */}
@@ -354,14 +403,14 @@ export default function Dashboard() {
                 {/* Filters */}
                 <div style={{display:'flex',gap:10,marginBottom:18,flexWrap:'wrap'}}>
                   <input value={filter.q} onChange={e=>setFilter(f=>({...f,q:e.target.value}))} placeholder="Search name, company, pain point..."
-                    style={{flex:1,minWidth:200,background:'rgba(255,255,255,0.04)',border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit'}}/>
+                    style={{flex:1,minWidth:200,background:C.inputBg,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit'}}/>
                   <Sel value={filter.service} onChange={v=>setFilter(f=>({...f,service:v}))} style={{width:150}}
                     options={[{v:'',l:'All Services'},{v:'automate',l:'Automate'},{v:'learn',l:'Learn'},{v:'grow',l:'Grow'}]}/>
                   <Sel value={filter.status} onChange={v=>setFilter(f=>({...f,status:v}))} style={{width:150}}
                     options={[{v:'',l:'All Statuses'},...STATUSES.map(s=>({v:s,l:s}))]}/>
                 </div>
 
-                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:'hidden'}}>
+                <div style={{background:C.tableBg,border:`1px solid ${C.border}`,borderRadius:12,overflow:'hidden'}}>
                   <div style={{overflowX:'auto'}}>
                     <table style={{width:'100%',borderCollapse:'collapse',minWidth:750}}>
                       <thead>
@@ -576,7 +625,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Invoice table */}
-                <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:'hidden'}}>
+                <div style={{background:C.tableBg,border:`1px solid ${C.border}`,borderRadius:12,overflow:'hidden'}}>
                   <div style={{padding:'16px 20px',borderBottom:`1px solid ${C.border}`,fontSize:10,color:C.muted,letterSpacing:'0.12em',textTransform:'uppercase'}}>Invoice Ledger</div>
                   <div style={{overflowX:'auto'}}>
                     <table style={{width:'100%',borderCollapse:'collapse'}}>
@@ -623,7 +672,7 @@ export default function Dashboard() {
       ════════════════════════════════════════════ */}
       {modal && (
         <div onClick={()=>{setModal(null);setEditForm(null);}} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'#0a1624',border:`1px solid ${C.border}`,borderRadius:16,width:'100%',maxWidth:580,maxHeight:'92vh',overflowY:'auto',position:'relative'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,width:'100%',maxWidth:580,maxHeight:'92vh',overflowY:'auto',position:'relative'}}>
 
             {/* Modal header */}
             <div style={{padding:'22px 24px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,background:'#0a1624',zIndex:2}}>
@@ -730,7 +779,7 @@ export default function Dashboard() {
                     <div><div style={{fontSize:10,color:C.muted,letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:5}}>Status</div><Sel value={ef.status} onChange={v=>setEf({status:v,progress:String(STATUS_PCT[v]??10)})} options={STATUSES.map(s=>({v:s,l:s}))}/></div>
                   </div>
                   <div><div style={{fontSize:10,color:C.muted,letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:5}}>Pain Point / Message</div>
-                    <textarea value={ef.message} onChange={e=>setEf({message:e.target.value})} style={{width:'100%',background:'rgba(255,255,255,0.04)',border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',height:70,resize:'vertical'}}/>
+                    <textarea value={ef.message} onChange={e=>setEf({message:e.target.value})} style={{width:'100%',background:C.inputBg,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',height:70,resize:'vertical'}}/>
                   </div>
                   <div><div style={{fontSize:10,color:C.muted,letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:5}}>Notes</div><Inp value={ef.notes} onChange={v=>setEf({notes:v})}/></div>
 
@@ -758,7 +807,7 @@ export default function Dashboard() {
       ════════════════════════════════════════════ */}
       {addOpen && (
         <div onClick={()=>setAddOpen(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:'#0a1624',border:`1px solid ${C.border}`,borderRadius:16,padding:'28px',width:'100%',maxWidth:520,maxHeight:'90vh',overflowY:'auto'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:'28px',width:'100%',maxWidth:520,maxHeight:'90vh',overflowY:'auto'}}>
             <div style={{fontSize:18,fontFamily:"'Playfair Display',Georgia,serif",fontWeight:700,color:'#fff',marginBottom:22}}>Add New Lead</div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
               {[
@@ -784,7 +833,7 @@ export default function Dashboard() {
             <div style={{marginTop:14}}>
               <div style={{fontSize:10,color:C.muted,letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:5}}>Pain Point</div>
               <textarea value={newLead.message} onChange={e=>setNewLead(l=>({...l,message:e.target.value}))} placeholder="What challenge did they share?"
-                style={{width:'100%',background:'rgba(255,255,255,0.04)',border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',height:70,resize:'vertical'}}/>
+                style={{width:'100%',background:C.inputBg,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:'9px 14px',fontSize:13,fontFamily:'inherit',height:70,resize:'vertical'}}/>
             </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:22}}>
               <button onClick={()=>setAddOpen(false)} style={{background:'transparent',border:`1px solid ${C.border}`,color:C.muted,padding:'9px 20px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>Cancel</button>
@@ -799,10 +848,11 @@ export default function Dashboard() {
         *{box-sizing:border-box;}
         ::-webkit-scrollbar{width:4px;}
         ::-webkit-scrollbar-track{background:transparent;}
-        ::-webkit-scrollbar-thumb{background:rgba(244,185,66,0.25);border-radius:2px;}
-        select option{background:#0d1e35;color:#e8eaf0;}
-        input[type=date]::-webkit-calendar-picker-indicator{filter:invert(0.6);}
+        ::-webkit-scrollbar-thumb{background:rgba(244,185,66,0.3);border-radius:2px;}
+        select option{background:${dark?'#0d1e35':'#ffffff'};color:${dark?'#e8eaf0':'#0A1628'};}
+        input[type=date]::-webkit-calendar-picker-indicator{filter:${dark?'invert(0.6)':'invert(0.3)'};}
         @keyframes spin{to{transform:rotate(360deg);}}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
       `}</style>
     </div>
   );
