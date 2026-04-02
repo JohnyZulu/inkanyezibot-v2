@@ -12,7 +12,7 @@ const CORS = {
 
 const SHEET_ID  = process.env.GOOGLE_SHEET_ID  || '1HbPcOop63ENb6Lcv0NVDhATP8RWmFwk4Vgqf6gE4Upk';
 const API_KEY   = process.env.GOOGLE_SHEETS_API_KEY;
-const SHEET_TAB = 'Table1';
+const SHEET_TAB = 'Lead Data';
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS });
