@@ -69,6 +69,8 @@ export default function Dashboard() {
   const [addOpen,  setAddOpen]  = useState(false);
   const [newLead,  setNewLead]  = useState<Lead>(blank());
   const [source,   setSource]   = useState('');
+  const [savingRow, setSavingRow] = useState<number|null>(null);
+  const [saveMsg,   setSaveMsg]  = useState<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const C = dark ? DARK_THEME : LIGHT_THEME;
@@ -140,9 +142,35 @@ export default function Dashboard() {
 
   const navTo=(v:View)=>{setView(v);scrollRef.current?.scrollTo(0,0);};
   const cycleStatus=(lead:Lead,e?:React.MouseEvent)=>{e?.stopPropagation();const idx=STATUSES.indexOf(lead.status);const next=STATUSES[(idx+1)%STATUSES.length];setLeads(prev=>prev.map(l=>l._row===lead._row?{...l,status:next,progress:String(STATUS_PCT[next]??10)}:l));};
-  const saveEdit=()=>{if(!editForm)return;setLeads(prev=>prev.map(l=>l._row===editForm._row?{...editForm}:l));if(modal)setModal(editForm);setEditForm(null);};
+  const saveEdit=()=>{if(!editForm)return;setLeads(prev=>prev.map(l=>l._row===editForm._row?{...editForm}:l));if(modal)setModal(editForm);saveLead(editForm);setEditForm(null);};
   const saveNew=()=>{if(!newLead.name.trim())return;setLeads(prev=>[...prev,{...newLead,_row:Date.now()}]);setAddOpen(false);setNewLead(blank());};
   const deleteLead=(lead:Lead)=>{setLeads(prev=>prev.filter(l=>l._row!==lead._row));setModal(null);setEditForm(null);};
+
+  // ── Write-back to Google Sheet via PUT /api/sheet ──────────────────────────
+  const saveLead=async(lead:Lead)=>{
+    setSavingRow(lead._row);
+    setSaveMsg('');
+    try{
+      const r=await fetch('/api/sheet',{
+        method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(lead),
+      });
+      const d=await r.json();
+      if(d.success){
+        setSaveMsg('✓ Saved to sheet');
+        setTimeout(()=>setSaveMsg(''),3000);
+      } else {
+        setSaveMsg('⚠ Save failed — check console');
+        console.error('[CRM] Save failed:',d.error);
+      }
+    } catch(e){
+      setSaveMsg('⚠ Network error');
+      console.error('[CRM] Save error:',e);
+    } finally {
+      setSavingRow(null);
+    }
+  };
   const ef=editForm||newLead;
   const setEf=(f:Partial<Lead>)=>editForm?setEditForm({...editForm,...f}):setNewLead({...newLead,...f});
 
@@ -286,7 +314,8 @@ export default function Dashboard() {
                 <button onClick={()=>setDark(d=>!d)} style={{background:dark?'rgba(244,185,66,0.1)':'rgba(10,22,40,0.08)',border:`1px solid ${C.border}`,color:dark?'#F4B942':C.text,padding:'7px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6}}>
                   <span style={{fontSize:14}}>{dark?'☀':'🌙'}</span><span>{dark?'Light':'Dark'}</span>
                 </button>
-                <button onClick={load} style={{background:'transparent',border:`1px solid ${C.border}`,color:C.muted,padding:'7px 16px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>↻ Refresh</button>
+                {saveMsg&&<span style={{fontSize:12,color:saveMsg.startsWith('✓')?'#3d9e6e':'#ef9f27',fontWeight:600,padding:'7px 12px',borderRadius:8,background:saveMsg.startsWith('✓')?'rgba(61,158,110,0.1)':'rgba(239,159,39,0.1)',border:`1px solid ${saveMsg.startsWith('✓')?'rgba(61,158,110,0.3)':'rgba(239,159,39,0.3)'}`}}>{saveMsg}</span>}
+              <button onClick={load} style={{background:'transparent',border:`1px solid ${C.border}`,color:C.muted,padding:'7px 16px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>↻ Refresh</button>
               </div>
             </div>
           )}
@@ -790,7 +819,7 @@ export default function Dashboard() {
               </div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}>
                 {!editForm&&<button onClick={()=>setEditForm({...modal})} style={{background:'rgba(244,185,66,0.1)',border:'1px solid #F4B942',color:'#F4B942',padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>✏ Edit</button>}
-                {editForm&&<button onClick={saveEdit} style={{background:'linear-gradient(135deg,#F4B942,#FF6B35)',border:'none',color:'#0A1628',padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'inherit'}}>Save</button>}
+                {editForm&&<button onClick={saveEdit} disabled={savingRow===editForm?._row} style={{background:'linear-gradient(135deg,#F4B942,#FF6B35)',border:'none',color:'#0A1628',padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'inherit',opacity:savingRow===editForm?._row?0.7:1}}>{savingRow===editForm?._row?'Saving...':'Save'}</button>}
                 <button onClick={()=>deleteLead(modal)} style={{background:'rgba(229,62,62,0.08)',border:'1px solid rgba(229,62,62,0.3)',color:'#f87171',padding:'5px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>Delete</button>
                 <button onClick={()=>{setModal(null);setEditForm(null);}} style={{background:'transparent',border:`1px solid ${C.border}`,color:C.muted,padding:'5px 10px',borderRadius:8,cursor:'pointer',fontSize:14}}>✕</button>
               </div>
