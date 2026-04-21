@@ -1,5 +1,5 @@
-"use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+'use client';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 /* ── Brand tokens ─────────────────────────────────────────────────── */
 const T = {
@@ -105,25 +105,10 @@ HARD LIMITS:
 `;
 
 /* ── Conversation flow stages ────────────────────────────────────── */
-type Stage = "greeting" | "discovery" | "qualification" | "form" | "booked";
 
-interface Message {
-  role: "assistant" | "user";
-  content: string;
-}
 
-interface FormData {
-  name: string;
-  email: string;
-  phone: string;
-}
 
 /* ── Speech recognition types ────────────────────────────────────── */
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof SpeechRecognition;
-  }
 }
 
 /* ── Quick-reply chips per stage ─────────────────────────────────── */
@@ -150,23 +135,23 @@ const CHIPS: Record<string, string[]> = {
 
 /* ═══════════════════════════════════════════════════════════════════ */
 export default function EmbedPage() {
-  const [messages, setMessages]     = useState<Message[]>([]);
+  const [messages, setMessages]     = useState([]);
   const [input, setInput]           = useState("");
   const [thinking, setThinking]     = useState(false);
-  const [stage, setStage]           = useState<Stage>("greeting");
+  const [stage, setStage]           = useState("greeting");
   const [msgCount, setMsgCount]     = useState(0);
   const [showForm, setShowForm]     = useState(false);
-  const [formData, setFormData]     = useState<FormData>({ name: "", email: "", phone: "" });
-  const [formStep, setFormStep]     = useState<"name"|"email"|"phone"|"done">("name");
+  const [formData, setFormData]     = useState({ name: "", email: "", phone: "" });
+  const [formStep, setFormStep]     = useState("name");
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [interimText, setInterimText] = useState("");
 
   const sessionId   = useRef(Math.random().toString(36).slice(2));
-  const messagesEnd = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const messagesEnd = useRef(null);
+  const textareaRef = useRef(null);
+  const canvasRef   = useRef(null);
+  const recognitionRef = useRef(null);
 
   /* ── Init: greeting + session restore ──────────────────────────── */
   useEffect(() => {
@@ -206,8 +191,8 @@ export default function EmbedPage() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d")!;
-    let raf: number;
+    const ctx = canvas.getContext("2d");
+    let raf;
     const resize = () => { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; };
     resize();
     window.addEventListener("resize", resize);
@@ -217,7 +202,7 @@ export default function EmbedPage() {
       phase: Math.random() * Math.PI * 2,
       speed: Math.random() * 0.008 + 0.002,
     }));
-    const draw = (t: number) => {
+    const draw = (t) => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       stars.forEach(s => {
         const a = ((Math.sin(t * s.speed + s.phase) + 1) / 2) * 0.5 + 0.1;
@@ -260,7 +245,7 @@ export default function EmbedPage() {
     rec.onend   = () => { setIsListening(false); setInterimText(""); };
     rec.onerror = () => { setIsListening(false); setInterimText(""); };
 
-    rec.onresult = (e: SpeechRecognitionEvent) => {
+    rec.onresult = (e) => {
       let interim = "";
       let final   = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -284,7 +269,7 @@ export default function EmbedPage() {
   }, []);
 
   /* ── Speech cleanup: fix common SA speech-to-text errors ──────── */
-  const cleanSpeech = (text: string): string => {
+  const cleanSpeech = (text) => {
     return text
       .replace(/\bi\b/g, "I")
       .replace(/\bim\b/gi, "I'm")
@@ -310,7 +295,7 @@ export default function EmbedPage() {
   }, [isListening]);
 
   /* ── Determine next stage based on message count ────────────────── */
-  const nextStage = (count: number): Stage => {
+  const nextStage = (count) => {
     if (count <= 2) return "greeting";
     if (count <= 4) return "discovery";
     if (count <= 5) return "qualification";
@@ -318,13 +303,13 @@ export default function EmbedPage() {
   };
 
   /* ── Send message ───────────────────────────────────────────────── */
-  const send = useCallback(async (override?: string) => {
+  const send = useCallback(async (override?) => {
     const text = (override || input).trim();
     if (!text || thinking) return;
     setInput("");
     setInterimText("");
 
-    const userMsg: Message = { role: "user", content: text };
+    const userMsg = { role: "user", content: text };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setThinking(true);
@@ -780,7 +765,7 @@ export default function EmbedPage() {
               <div style={{ display: "flex", gap: 2, justifyContent: "flex-end", marginTop: 3 }}>
                 {(["#007A4D",11],["#FFB612",11],["#DE3831",18],["#002395",11],["#FFFFFF",11]) &&
                   [["#007A4D",11],["#FFB612",11],["#DE3831",18],["#002395",11],["#FFFFFF",11]].map(([c,w],i) => (
-                  <div key={i} style={{ width: w, height: "2.5px", background: c as string, borderRadius: 2, opacity: 0.7 }} />
+                  <div key={i} style={{ width: w, height: "2.5px", background: c, borderRadius: 2, opacity: 0.7 }} />
                 ))}
               </div>
             </div>
