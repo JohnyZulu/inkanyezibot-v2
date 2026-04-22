@@ -286,7 +286,7 @@ export async function POST(request) {
 
     const contents = [...history, {role:'user',parts:[{text:thinkingPrefix}]}];
 
-    console.log(`[InkanyeziBot] gemini-2.5-flash | session:${sessionId} | ref:${stableRef} | stage:${incoming?.qualification_stage||'new'} | msgs:${msgCount}`);
+    console.log(`[InkanyeziBot] gemini-2.5-flash-preview-04-17 | session:${sessionId} | ref:${stableRef} | stage:${incoming?.qualification_stage||'new'} | msgs:${msgCount}`);
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-preview-04-17',
