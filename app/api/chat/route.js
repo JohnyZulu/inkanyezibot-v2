@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════
 // INKANYEZI AI BRAIN — app/api/chat/route.js  v8
 // SDK:     @google/genai
-// Model:   gemini-2.5-flash-preview-04-17
+// Model:   gemini-2.5-flash
 // Changes: Stable ref generation, guaranteed webhook payload,
 //          name captured from first user message as fallback
 // ════════════════════════════════════════════════════════════════════
@@ -286,10 +286,10 @@ export async function POST(request) {
 
     const contents = [...history, {role:'user',parts:[{text:thinkingPrefix}]}];
 
-    console.log(`[InkanyeziBot] gemini-2.5-flash-preview-04-17 | session:${sessionId} | ref:${stableRef} | stage:${incoming?.qualification_stage||'new'} | msgs:${msgCount}`);
+    console.log(`[InkanyeziBot] gemini-2.5-flash | session:${sessionId} | ref:${stableRef} | stage:${incoming?.qualification_stage||'new'} | msgs:${msgCount}`);
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-preview-04-17',
+      model: 'gemini-2.5-flash',
       contents,
       config: {
         systemInstruction: systemPrompt,
