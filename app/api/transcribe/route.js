@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════
 // DEEPGRAM TRANSCRIPTION — app/api/transcribe/route.js
 // Accepts audio blob via POST, returns AI-transcribed text
-// Uses Deepgram Nova-2 — best-in-class speech model, SA English
+// Uses Deepgram Nova-2 — SA English
 // ════════════════════════════════════════════════════════════════════
 
 const CORS = {
@@ -15,77 +15,76 @@ export async function OPTIONS() {
 }
 
 export async function GET() {
+  // Quick key validation check
+  const hasKey = !!process.env.DEEPGRAM_API_KEY;
+  const keyLen = (process.env.DEEPGRAM_API_KEY || '').length;
   return new Response(
-    JSON.stringify({ status: 'ok', model: 'nova-2', language: 'en-ZA' }),
+    JSON.stringify({ status: hasKey ? 'ok' : 'no_key', model: 'nova-2', language: 'en-ZA', keyLength: keyLen }),
     { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } }
   );
 }
 
 export async function POST(request) {
   const t0 = Date.now();
+  const apiKey = process.env.DEEPGRAM_API_KEY;
 
-  if (!process.env.DEEPGRAM_API_KEY) {
+  if (!apiKey) {
     return new Response(
-      JSON.stringify({ error: 'Transcription not configured', text: '' }),
+      JSON.stringify({ error: 'No Deepgram key configured', text: '' }),
       { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } }
     );
   }
 
   try {
-    // Get raw audio bytes
     const audioBuffer = await request.arrayBuffer();
-    const audioBytes = new Uint8Array(audioBuffer);
+    const size = audioBuffer.byteLength;
 
-    if (audioBytes.length < 100) {
+    if (size < 100) {
       return new Response(
-        JSON.stringify({ error: 'No audio received', text: '' }),
+        JSON.stringify({ error: 'Recording too short', text: '' }),
         { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } }
       );
     }
 
-    console.log('[Transcribe] Received ' + (audioBytes.length / 1024).toFixed(1) + 'KB audio');
-
-    // Deepgram auto-detects format — use generic content type
-    // This avoids issues with browser-specific MIME types like audio/webm;codecs=opus
-    const dgUrl = 'https://api.deepgram.com/v1/listen?'
-      + 'model=nova-2'
-      + '&language=en-ZA'
-      + '&smart_format=true'
-      + '&punctuate=true'
-      + '&detect_language=false';
+    const dgUrl = 'https://api.deepgram.com/v1/listen?model=nova-2&language=en-ZA&smart_format=true&punctuate=true';
 
     const dgResponse = await fetch(dgUrl, {
       method: 'POST',
       headers: {
-        'Authorization': 'Token ' + process.env.DEEPGRAM_API_KEY,
+        'Authorization': 'Token ' + apiKey,
         'Content-Type': 'audio/webm',
       },
-      body: audioBytes,
+      body: new Uint8Array(audioBuffer),
     });
 
+    const dgBody = await dgResponse.text();
+
     if (!dgResponse.ok) {
-      const errBody = await dgResponse.text();
-      console.error('[Transcribe] Deepgram HTTP ' + dgResponse.status + ': ' + errBody.slice(0, 300));
-
-      // If 401/403 — key issue
-      if (dgResponse.status === 401 || dgResponse.status === 403) {
-        return new Response(
-          JSON.stringify({ error: 'API key invalid — contact support', text: '' }),
-          { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } }
-        );
-      }
-
+      // Return the EXACT Deepgram error to the user for debugging
+      console.error('[Transcribe] Deepgram ' + dgResponse.status + ': ' + dgBody.slice(0, 500));
       return new Response(
-        JSON.stringify({ error: 'Transcription failed', text: '' }),
-        { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } }
+        JSON.stringify({
+          error: 'Deepgram error ' + dgResponse.status + ': ' + (dgBody.slice(0, 100)),
+          text: '',
+          status: dgResponse.status
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } }
       );
     }
 
-    const result = await dgResponse.json();
+    // Parse successful response
+    let result;
+    try {
+      result = JSON.parse(dgBody);
+    } catch {
+      return new Response(
+        JSON.stringify({ error: 'Invalid response from Deepgram', text: '' }),
+        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } }
+      );
+    }
+
     const transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
     const confidence = result?.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0;
-
-    console.log('[Transcribe] ' + (Date.now() - t0) + 'ms | conf:' + (confidence * 100).toFixed(0) + '% | "' + transcript.slice(0, 80) + '"');
 
     return new Response(
       JSON.stringify({ text: transcript, confidence }),
@@ -95,8 +94,8 @@ export async function POST(request) {
   } catch (error) {
     console.error('[Transcribe] Exception: ' + (error?.message || 'unknown'));
     return new Response(
-      JSON.stringify({ error: 'Transcription error', text: '' }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } }
+      JSON.stringify({ error: 'Server error: ' + (error?.message || 'unknown'), text: '' }),
+      { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } }
     );
   }
 }
