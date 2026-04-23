@@ -19,7 +19,7 @@ export async function GET() {
   const hasKey = !!process.env.DEEPGRAM_API_KEY;
   const keyLen = (process.env.DEEPGRAM_API_KEY || '').length;
   return new Response(
-    JSON.stringify({ status: hasKey ? 'ok' : 'no_key', model: 'nova-2', language: 'en-ZA', keyLength: keyLen }),
+    JSON.stringify({ status: hasKey ? 'ok' : 'no_key', model: 'nova-2', language: 'en', keyLength: keyLen }),
     { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } }
   );
 }
@@ -46,7 +46,7 @@ export async function POST(request) {
       );
     }
 
-    const dgUrl = 'https://api.deepgram.com/v1/listen?model=nova-2&language=en-ZA&smart_format=true&punctuate=true';
+    const dgUrl = 'https://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&punctuate=true';
 
     const dgResponse = await fetch(dgUrl, {
       method: 'POST',
