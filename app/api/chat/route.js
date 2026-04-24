@@ -1,9 +1,8 @@
 // ════════════════════════════════════════════════════════════════════
-// INKANYEZI AI BRAIN — app/api/chat/route.js  v8
+// INKANYEZI AI BRAIN — app/api/chat/route.js  v9
 // SDK:     @google/genai
-// Model:   gemini-2.5-flash
-// Changes: Stable ref generation, guaranteed webhook payload,
-//          name captured from first user message as fallback
+// Model:   gemini-2.5-flash (fallback: gemini-2.0-flash)
+// v9:      Auto-retry, fallback model, rate limit handling
 // ════════════════════════════════════════════════════════════════════
 
 import { GoogleGenAI } from '@google/genai';
@@ -288,19 +287,46 @@ export async function POST(request) {
 
     const contents = [...history, {role:'user',parts:[{text:thinkingPrefix}]}];
 
-    console.log(`[InkanyeziBot] gemini-2.5-flash | session:${sessionId} | ref:${stableRef} | stage:${incoming?.qualification_stage||'new'} | msgs:${msgCount}`);
+    // ── RESILIENT AI CALL — retry + fallback model ──────────────────
+    const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+    let response = null;
+    let lastError = null;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature:       0.4,
-        topP:              0.85,
-        topK:              40,
-        maxOutputTokens:   2048,
-      },
-    });
+    for (const model of MODELS) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.log(`[InkanyeziBot] ${model} | attempt:${attempt} | session:${sessionId} | ref:${stableRef} | msgs:${msgCount}`);
+
+          response = await ai.models.generateContent({
+            model,
+            contents,
+            config: {
+              systemInstruction: systemPrompt,
+              temperature:       0.4,
+              topP:              0.85,
+              topK:              40,
+              maxOutputTokens:   2048,
+            },
+          });
+
+          if (response?.text) break; // success — exit retry loop
+        } catch (err) {
+          lastError = err;
+          const errMsg = err?.message || '';
+          console.error(`[InkanyeziBot] ${model} attempt:${attempt} failed: ${errMsg.slice(0,200)}`);
+
+          // Auth errors won't resolve with retries
+          if (errMsg.includes('401') || errMsg.includes('api_key') || errMsg.includes('unauthenticated')) {
+            throw err;
+          }
+          // Wait before retry (1s, 2s, 4s)
+          if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+        }
+      }
+      if (response?.text) break; // got a response, stop trying models
+    }
+
+    if (!response?.text) throw lastError || new Error('All AI models failed');
 
     const raw = response.text;
     console.log(`[InkanyeziBot] Done in ${Date.now()-t0}ms | ${raw?.length||0} chars`);
@@ -373,16 +399,16 @@ export async function POST(request) {
     console.error(`[InkanyeziBot] Error (${Date.now()-t0}ms):`, error?.message);
     console.error('[InkanyeziBot] Stack:', error?.stack?.slice(0,500));
 
-    let msg = 'Something went wrong. Please try again or WhatsApp: +27 65 880 4122.';
+    let msg = 'I\'m having a moment — please tap the ↺ button and try again.';
     if (error?.message) {
       const e = error.message.toLowerCase();
       if (e.includes('401')||e.includes('api_key')||e.includes('unauthenticated'))
-        msg = 'API key issue. Contact us: +27 65 880 4122.';
-      else if (e.includes('429')||e.includes('quota'))
-        msg = 'Very busy right now — please try again in a moment or WhatsApp: +27 65 880 4122.';
-      else if (e.includes('404')||e.includes('not found')||e.includes('model'))
-        msg = 'AI model issue. Contact us: +27 65 880 4122.';
+        msg = 'Service configuration issue. WhatsApp us: +27 65 880 4122.';
+      else if (e.includes('429')||e.includes('quota')||e.includes('rate'))
+        msg = 'High demand right now — please wait 10 seconds and try again.';
+      else if (e.includes('404')||e.includes('not found'))
+        msg = 'Service temporarily unavailable — please try again shortly.';
     }
-    return new Response(JSON.stringify({message:msg,context:null}),{status:500,headers:{'Content-Type':'application/json',...CORS}});
+    return new Response(JSON.stringify({message:msg,context:null}),{status:200,headers:{'Content-Type':'application/json',...CORS}});
   }
 }
