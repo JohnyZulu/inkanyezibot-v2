@@ -1,8 +1,15 @@
-// app/api/sheet/route.js  v3
+// app/api/sheet/route.js  v4
 // Reads & writes Inkanyezi Leads CRM Google Sheet
 // GET  — reads all leads (API key, read-only)
 // PUT  — saves a single lead edit (forwards to Make webhook → Google Sheets OAuth)
 // Env vars: GOOGLE_SHEETS_API_KEY, GOOGLE_SHEET_ID, MAKE_CRM_WEBHOOK_URL
+//
+// v4 changes vs v3:
+// — Removed { next: { revalidate: 30 } } cache that caused empty results
+// — Fixed phone column mapping (# header normalises to empty string bug)
+// — Added explicit no-cache headers so dashboard always reads fresh data
+// — Added console logging for easier debugging
+// — Handles Table1 format (dropdown arrows) and normal range equally
 
 import { NextResponse } from 'next/server';
 
@@ -25,36 +32,59 @@ export async function OPTIONS() {
 export async function GET() {
   try {
     if (!API_KEY) {
+      console.log('[Sheet GET] No API key — returning mock leads');
       return NextResponse.json({ leads: getMockLeads(), source: 'mock' }, { headers: CORS });
     }
 
     const range = encodeURIComponent(`${SHEET_TAB}!A:Z`);
     const url   = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${range}?key=${API_KEY}`;
-    const res   = await fetch(url, { next: { revalidate: 30 } });
+
+    // No-cache: always read fresh data from Google Sheets
+    const res = await fetch(url, { cache: 'no-store' });
 
     if (!res.ok) {
       const err = await res.text();
-      console.error('[Sheet GET] Error:', err);
+      console.error('[Sheet GET] Sheets API error:', res.status, err.slice(0, 300));
       return NextResponse.json({ leads: getMockLeads(), source: 'mock', error: err }, { headers: CORS });
     }
 
     const data    = await res.json();
     const rows    = data.values || [];
-    if (rows.length < 2) return NextResponse.json({ leads: [], source: 'sheet' }, { headers: CORS });
 
-    const headers = rows[0].map(h => h.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
-    const leads   = rows.slice(1).map((row, i) => {
+    console.log(`[Sheet GET] Rows returned from API: ${rows.length}`);
+
+    if (rows.length < 2) {
+      return NextResponse.json({ leads: [], source: 'sheet', total: 0 }, { headers: CORS });
+    }
+
+    // Normalise headers — handle # becoming empty string, Tr prefix, etc.
+    const rawHeaders = rows[0];
+    const headers = rawHeaders.map((h, i) => {
+      const norm = h.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+      // Handle the # phone column and Tr (table row indicator) specially
+      if (!norm || norm === 'tr') return `_col_${i}`;
+      return norm;
+    });
+
+    console.log('[Sheet GET] Headers:', headers.join(', '));
+
+    // Build phone column index explicitly — it's column C (index 2)
+    const PHONE_COL = 2;
+
+    const leads = rows.slice(1).map((row, i) => {
       const obj = { _row: i + 2 };
       headers.forEach((h, j) => { obj[h] = (row[j] || '').trim(); });
+
       return {
         _row:           obj._row,
-        name:           obj.name || obj.tr || obj.lead_name || '',
+        name:           obj.name || obj.lead_name || '',
         email:          obj.email || '',
-        phone:          obj[''] || obj.phone || obj['#'] || '',
+        // Phone is always column C (index 2) regardless of header name
+        phone:          (row[PHONE_COL] || '').trim(),
         company:        obj.company || '',
         service:        (obj.service_interest || obj.service || '').toLowerCase(),
         message:        obj.message || obj.pain_point || '',
-        status:         obj.status || 'New',
+        status:         obj.status || obj.meeting_status || 'New',
         progress:       obj.progress || '',
         notes:          obj.notes || '',
         ref:            obj.reference_number || obj.ref || '',
@@ -66,12 +96,17 @@ export async function GET() {
         invoiceStatus:  obj.invoice_status || 'Not Sent',
         invoiceAmount:  obj.invoice_amount || obj.amount || '',
         meetingStatus:  obj.meeting_status || '',
-        meetingDate:    obj.meeting_date || '',
+        meetingDate:    obj.meeeting_date || obj.meeting_date || '',
         meetingTime:    obj.meeting_time || '',
+        source:         obj.source || '',
+        has_email:      (obj.has_email || '').toLowerCase() === 'true',
+        has_whatsapp:   (obj.has_whatsapp || '').toLowerCase() === 'true',
       };
-    }).filter(l => l.name);
+    }).filter(l => l.name); // skip rows with no name
 
-    return NextResponse.json({ leads, source: 'sheet' }, { headers: CORS });
+    console.log(`[Sheet GET] Leads parsed: ${leads.length}`);
+
+    return NextResponse.json({ leads, source: 'sheet', total: leads.length }, { headers: CORS });
 
   } catch (e) {
     console.error('[Sheet GET] Exception:', e.message);
@@ -143,7 +178,7 @@ export async function PUT(request) {
   }
 }
 
-// ── Mock data (dev fallback) ──────────────────────────────────────────────────
+// ── Mock data (dev fallback when no API key) ──────────────────────────────────
 function getMockLeads() {
   return [
     { _row:2, name:'Daryl',   email:'sanelesishange@outlook.com', phone:'',           company:'',                   service:'automate', message:'',                                                     status:'New',         progress:'10',  notes:'',                                               ref:'INK-GEN-2026-1001', created:'2026-03-25', projectStarted:'No',  startDate:'',         endDate:'',           deliverables:'',                                              invoiceStatus:'Not Sent', invoiceAmount:'',    meetingStatus:'', meetingDate:'', meetingTime:'' },
