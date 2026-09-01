@@ -1,4 +1,34 @@
 Inkanyezi Internal Operations Agent — Engineering Context Brief
+---
+
+## 📍 Build Status — living section, keep updated
+
+**Last updated:** 2026-09-01 · **Current phase:** Phase 1 (Internal Operations) · **Stage:** Foundation
+
+### ✅ Done & committed to repo
+- `AGENTS.md` — engineering context brief (this file)
+- `lib/agent/brain.js` — Gemini reasoning core: model config, Inkanyezi system prompt (with security rules), `runAgentTask()`
+- `app/api/agent/route.js` — API endpoint: `POST` (run a task) + `GET` (health check)
+- **Model:** `gemini-3.7-flash` (Flash tier — chosen deliberately; see notes)
+
+### 🔲 In progress / next up (in order)
+1. Add deps to `package.json`: `@langchain/google`, `@langchain/core`
+2. Set `GEMINI_API_KEY` as an environment variable (Vercel + local `.env`)
+3. Deploy, then hit `GET /api/agent` to confirm the endpoint is live
+4. Test `POST /api/agent` with `{"task":"Introduce yourself in one sentence"}` to confirm the model responds
+5. **Day 3:** build `lib/agent/tools/crm-reader.js` — first custom tool, introduces LangChain.js tool/function calling
+
+### ⚠️ Verified vs. unverified (be honest about this)
+- Foundation code was **sandbox-tested** (imports, model construction, key-guard, a real call reaching Gemini) — but **not yet run in this repo or deployed**. Steps 2–4 above are what actually confirm it works here.
+- `gemini-3.7-flash` free-tier availability **for this key in South Africa is UNVERIFIED** — it's ~3 weeks old and may be paid-tier first. If a call errors naming the model, drop to a slightly older current-gen Flash.
+
+### 🧭 Standing decisions & constraints (don't re-litigate without reason)
+- **Flash tier, not Pro:** Flash is built for agentic/tool workloads AND is the only tier genuinely usable on Google's free plan (Pro is paid-only since Apr 2026). Escalate to Pro only after enabling billing, for genuinely hard reasoning.
+- **Free tier uses prompts for training** → build/test with **dummy data only**; real client/lead data requires a billed tier with training disabled (POPIA).
+- **No MCP yet** (that's Phase 2) · **No multi-agent yet** (that's Phase 6).
+- **Open security item (deferred, tracked):** unauthenticated CRM dashboard link in the internal lead-confirmation email — do not widen it; remediation planned.
+
+---
 Purpose of this document: You (Codex) are being brought in as a pair-programming collaborator on an AI agent build. This brief gives you the engineering context, the exact stack, the architecture, what has already been built and tested, and the conventions and constraints your code must respect. Read it fully before proposing code — several details here override what you may infer from training data, because parts of this ecosystem changed in 2025–2026.
 
 Prepared: August 2026 · Durban, South Africa Maintainer: Sanele Sishange, Founder & AI Automation Consultant, Inkanyezi Technologies
