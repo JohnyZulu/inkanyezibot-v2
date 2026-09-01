@@ -20,7 +20,7 @@ Inkanyezi Internal Operations Agent — Engineering Context Brief
 
 ### ⚠️ Verified vs. unverified (be honest about this)
 - Foundation code was **sandbox-tested** (imports, model construction, key-guard, a real call reaching Gemini) — but **not yet run in this repo or deployed**. Steps 2–4 above are what actually confirm it works here.
-- `gemini-3.7-flash` free-tier availability **for this key in South Africa is UNVERIFIED** — it's ~3 weeks old and may be paid-tier first. If a call errors naming the model, drop to a slightly older current-gen Flash.
+- `gemini-3.7-flash` free-tier availability *  - ✅ VERIFIED (2026-09-01): gemini-3.7-flash responds end-to-end via /api/agent on the free tier (SA). Foundation deployed and working in production.
 
 ### 🧭 Standing decisions & constraints (don't re-litigate without reason)
 - **Flash tier, not Pro:** Flash is built for agentic/tool workloads AND is the only tier genuinely usable on Google's free plan (Pro is paid-only since Apr 2026). Escalate to Pro only after enabling billing, for genuinely hard reasoning.
