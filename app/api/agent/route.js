@@ -11,8 +11,9 @@
 
 import { runAgentWithTools } from "@/lib/agent/brain";
 import { crmReaderTool } from "@/lib/agent/tools/crm-reader";
+import { crmWriterTool } from "@/lib/agent/tools/crm-writer";
 
-const TOOLS = [crmReaderTool];
+const TOOLS = [crmReaderTool, crmWriterTool];
 
 export async function POST(request) {
   let body;
