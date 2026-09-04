@@ -12,8 +12,9 @@
 import { runAgentWithTools } from "@/lib/agent/brain";
 import { crmReaderTool } from "@/lib/agent/tools/crm-reader";
 import { crmWriterTool } from "@/lib/agent/tools/crm-writer";
+import { leadScorerTool } from "@/lib/agent/tools/lead-scorer";
 
-const TOOLS = [crmReaderTool, crmWriterTool];
+const TOOLS = [crmReaderTool, crmWriterTool, leadScorerTool];
 
 export async function POST(request) {
   let body;
