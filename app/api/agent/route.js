@@ -1,9 +1,18 @@
 // app/api/agent/route.js
 //
 // Entry point Vercel Cron (and later, WhatsApp/Make.com) calls to run the
-// agent. Keeps brain.js free of any HTTP-specific concerns.
+// agent. Keeps brain.js free of HTTP concerns.
+//
+// The agent now runs WITH its tool registry. The model decides for itself
+// whether a given task needs a tool — a plain "introduce yourself" task
+// won't trigger one; "how many new leads do we have?" will call read_crm.
+// As we build more tools, add them to the TOOLS array below — nothing else
+// in this file changes.
 
-import { runAgentTask } from "@/lib/agent/brain";
+import { runAgentWithTools } from "@/lib/agent/brain";
+import { crmReaderTool } from "@/lib/agent/tools/crm-reader";
+
+const TOOLS = [crmReaderTool];
 
 export async function POST(request) {
   let body;
@@ -19,7 +28,7 @@ export async function POST(request) {
   }
 
   try {
-    const result = await runAgentTask(task);
+    const result = await runAgentWithTools(task, TOOLS);
     return Response.json({ result });
   } catch (err) {
     console.error("Agent task failed:", err);
@@ -27,8 +36,7 @@ export async function POST(request) {
   }
 }
 
-// Simple health check — hit this in a browser once deployed to confirm
-// the route is live before wiring up cron.
+// Health check — visit /api/agent in a browser to confirm the route is live.
 export async function GET() {
   return Response.json({ status: "Inkanyezi agent endpoint is alive" });
 }
