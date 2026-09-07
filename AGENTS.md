@@ -91,6 +91,10 @@ An **Internal Operations Agent** for a lean AI-automation consultancy. Not custo
 - Flag drift from the constraints above (legacy package, core 0.3.x, hardcoded secrets, premature multi-agent, temperature-fiddling, data-deleting tools, unauthenticated surfaces).
 - Two engineers, one codebase: explain the *why* behind non-obvious calls. Refuse to fabricate lockfile/dependency data (as was correctly done when npm was unreachable).
 
+**Side Note**:
+Chat memory is currently session-only (re-sent history + browser storage). Persistent/cross-session memory and the agent audit log will require a real database — provision cleanly at Stage 2; do not reuse the deleted February Neon instance." That way future-you (and Codex) knows the database is a deliberate future step, not a forgotten dependency.
+
+
 ---
 
 *Inkanyezi Technologies — Durban, KwaZulu-Natal, South Africa. Built on Gemini, LangChain.js, Vercel, Make.com, and MCP.*
