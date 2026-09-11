@@ -14,8 +14,9 @@ import { crmReaderTool } from "@/lib/agent/tools/crm-reader";
 import { crmWriterTool } from "@/lib/agent/tools/crm-writer";
 import { leadScorerTool } from "@/lib/agent/tools/lead-scorer";
 import { reportGeneratorTool } from "@/lib/agent/tools/report-generator";
+import { crmHygieneTool } from "@/lib/agent/tools/crm-hygiene";
 
-const TOOLS = [crmReaderTool, crmWriterTool, leadScorerTool, reportGeneratorTool];
+const TOOLS = [crmReaderTool, crmWriterTool, leadScorerTool, reportGeneratorTool, crmHygieneTool];
 
 export async function POST(request) {
   let body;
