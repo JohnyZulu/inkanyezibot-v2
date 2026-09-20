@@ -87,7 +87,7 @@ export async function GET() {
         status:         obj.status || obj.meeting_status || 'New',
         progress:       obj.progress || '',
         notes:          obj.notes || '',
-        ref:            obj.reference_number || obj.ref || '',
+        ref:            obj.reference || obj.reference_number || obj.ref || '',
         created:        obj.timestamp || obj.date_added || obj.created || '',
         projectStarted: obj.project_started || obj.started || 'No',
         startDate:      obj.start_date || obj.project_start || '',
