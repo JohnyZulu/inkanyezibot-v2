@@ -1,5 +1,6 @@
 'use client';
 import AgentChat from './AgentChat';
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 type Lead = {
@@ -235,6 +236,9 @@ export default function Dashboard() {
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:"'DM Sans','Segoe UI',sans-serif",color:C.text,display:'flex',flexDirection:isMobile?'column':'row',overflow:'hidden',height:'100vh',transition:'background 0.3s'}}>
+
+      {/* Floating Inkanyezi Agent chat */}
+      <AgentChat C={C} dark={dark} />
 
       {/* Stars */}
       {dark&&(
