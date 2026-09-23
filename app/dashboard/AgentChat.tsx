@@ -92,9 +92,9 @@ export default function AgentChat({ C, dark }: { C: Theme; dark: boolean }) {
   }
 
   // ── Open panel ─────────────────────────────────────────────────────────────
-    return (
-     <div style={{...}}>
-       <AgentChat C={C} dark={dark} />
+  return (
+    <div
+      style={{
         position: 'fixed', bottom: 24, right: 24, zIndex: 900,
         width: 'min(400px, calc(100vw - 32px))',
         height: 'min(560px, calc(100vh - 48px))',
