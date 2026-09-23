@@ -1,5 +1,5 @@
 'use client';
-
+import AgentChat from './AgentChat';
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 type Lead = {
