@@ -1,14 +1,7 @@
-// app/api/agent/route.js
-//
-// Entry point Vercel Cron (and later, WhatsApp/Make.com) calls to run the
-// agent. Keeps brain.js free of HTTP concerns.
-//
-// The agent now runs WITH its tool registry. The model decides for itself
-// whether a given task needs a tool — a plain "introduce yourself" task
-// won't trigger one; "how many new leads do we have?" will call read_crm.
-// As we build more tools, add them to the TOOLS array below — nothing else
-// in this file changes.
+// app/api/agent/route.js — authenticated.
+// POST requires EITHER a signed-in dashboard session OR the machine bearer token.
 
+import { auth } from "@/auth";
 import { runAgentWithTools } from "@/lib/agent/brain";
 import { crmReaderTool } from "@/lib/agent/tools/crm-reader";
 import { crmWriterTool } from "@/lib/agent/tools/crm-writer";
@@ -18,7 +11,22 @@ import { crmHygieneTool } from "@/lib/agent/tools/crm-hygiene";
 
 const TOOLS = [crmReaderTool, crmWriterTool, leadScorerTool, reportGeneratorTool, crmHygieneTool];
 
+function hasValidBearer(request) {
+  const secret = process.env.AGENT_API_SECRET;
+  if (!secret) return false;
+  const header = request.headers.get("authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  return token.length === secret.length && token === secret;
+}
+
 export async function POST(request) {
+  // Gate: signed-in dashboard user, or a machine caller with the bearer token.
+  const session = await auth();
+  const authorized = Boolean(session?.user?.email) || hasValidBearer(request);
+  if (!authorized) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let body;
   try {
     body = await request.json();
@@ -40,7 +48,7 @@ export async function POST(request) {
   }
 }
 
-// Health check — visit /api/agent in a browser to confirm the route is live.
+// Health check — safe to leave open.
 export async function GET() {
   return Response.json({ status: "Inkanyezi agent endpoint is alive" });
 }
