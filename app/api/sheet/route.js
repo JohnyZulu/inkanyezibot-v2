@@ -1,192 +1,144 @@
-// app/api/sheet/route.js  v4
-// Reads & writes Inkanyezi Leads CRM Google Sheet
-// GET  — reads all leads (API key, read-only)
-// PUT  — saves a single lead edit (forwards to Make webhook → Google Sheets OAuth)
-// Env vars: GOOGLE_SHEETS_API_KEY, GOOGLE_SHEET_ID, MAKE_CRM_WEBHOOK_URL
-//
-// v4 changes vs v3:
-// — Removed { next: { revalidate: 30 } } cache that caused empty results
-// — Fixed phone column mapping (# header normalises to empty string bug)
-// — Added explicit no-cache headers so dashboard always reads fresh data
-// — Added console logging for easier debugging
-// — Handles Table1 format (dropdown arrows) and normal range equally
+// app/api/sheet/route.js  v5 — hardened
+// GET reads all leads; PUT saves one edit (→ Make webhook). Both require a signed-in session.
+// No hardcoded fallbacks, no mock data, CORS restricted to the dashboard origin.
 
 import { NextResponse } from 'next/server';
+import { auth } from '@/auth';
+
+const SHEET_TAB = 'Lead Data';
+const ALLOWED_ORIGIN = process.env.DASHBOARD_ORIGIN || 'https://inkanyezibot-v2.vercel.app';
 
 const CORS = {
-  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Origin':  ALLOWED_ORIGIN,
   'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-const SHEET_ID           = process.env.GOOGLE_SHEET_ID || '1HbPcOop63ENb6Lcv0NVDhATP8RWmFwk4Vgqf6gE4Upk';
-const API_KEY            = process.env.GOOGLE_SHEETS_API_KEY;
-const MAKE_CRM_WEBHOOK   = process.env.MAKE_CRM_WEBHOOK_URL || 'https://hook.eu1.make.com/hydq8t1uu0ruqujcvp5s389bkwkjl31r';
-const SHEET_TAB          = 'Lead Data';
+function unauthorized() {
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: CORS });
+}
+function configError(missing) {
+  console.error('[Sheet] Missing required env var:', missing);
+  return NextResponse.json({ error: 'Server not configured' }, { status: 500, headers: CORS });
+}
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS });
 }
 
-// ── GET — read all leads ──────────────────────────────────────────────────────
+// ── GET — read all leads (signed-in users only) ───────────────────────────────
 export async function GET() {
-  try {
-    if (!API_KEY) {
-      console.log('[Sheet GET] No API key — returning mock leads');
-      return NextResponse.json({ leads: getMockLeads(), source: 'mock' }, { headers: CORS });
-    }
+  const session = await auth();
+  if (!session?.user?.email) return unauthorized();
 
+  const SHEET_ID = process.env.GOOGLE_SHEET_ID;
+  const API_KEY  = process.env.GOOGLE_SHEETS_API_KEY;
+  if (!SHEET_ID) return configError('GOOGLE_SHEET_ID');
+  if (!API_KEY)  return configError('GOOGLE_SHEETS_API_KEY');
+
+  try {
     const range = encodeURIComponent(`${SHEET_TAB}!A:Z`);
     const url   = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${range}?key=${API_KEY}`;
-
-    // No-cache: always read fresh data from Google Sheets
-    const res = await fetch(url, { cache: 'no-store' });
+    const res   = await fetch(url, { cache: 'no-store' });
 
     if (!res.ok) {
       const err = await res.text();
       console.error('[Sheet GET] Sheets API error:', res.status, err.slice(0, 300));
-      return NextResponse.json({ leads: getMockLeads(), source: 'mock', error: err }, { headers: CORS });
+      return NextResponse.json({ error: 'Could not read the sheet' }, { status: 502, headers: CORS });
     }
 
-    const data    = await res.json();
-    const rows    = data.values || [];
-
-    console.log(`[Sheet GET] Rows returned from API: ${rows.length}`);
-
+    const data = await res.json();
+    const rows = data.values || [];
     if (rows.length < 2) {
       return NextResponse.json({ leads: [], source: 'sheet', total: 0 }, { headers: CORS });
     }
 
-    // Normalise headers — handle # becoming empty string, Tr prefix, etc.
-    const rawHeaders = rows[0];
-    const headers = rawHeaders.map((h, i) => {
+    const headers = rows[0].map((h, i) => {
       const norm = h.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-      // Handle the # phone column and Tr (table row indicator) specially
       if (!norm || norm === 'tr') return `_col_${i}`;
       return norm;
     });
 
-    console.log('[Sheet GET] Headers:', headers.join(', '));
-
-    // Build phone column index explicitly — it's column C (index 2)
-    const PHONE_COL = 2;
-
+    const PHONE_COL = 2; // phone is always column C
     const leads = rows.slice(1).map((row, i) => {
       const obj = { _row: i + 2 };
       headers.forEach((h, j) => { obj[h] = (row[j] || '').trim(); });
-
       return {
-        _row:           obj._row,
-        name:           obj.name || obj.lead_name || '',
-        email:          obj.email || '',
-        // Phone is always column C (index 2) regardless of header name
-        phone:          (row[PHONE_COL] || '').trim(),
-        company:        obj.company || '',
-        service:        (obj.service_interest || obj.service || '').toLowerCase(),
-        message:        obj.message || obj.pain_point || '',
-        status:         obj.status || obj.meeting_status || 'New',
-        progress:       obj.progress || '',
-        notes:          obj.notes || '',
-        ref:            obj.reference || obj.reference_number || obj.ref || '',
-        created:        obj.timestamp || obj.date_added || obj.created || '',
+        _row: obj._row,
+        name: obj.name || obj.lead_name || '',
+        email: obj.email || '',
+        phone: (row[PHONE_COL] || '').trim(),
+        company: obj.company || '',
+        service: (obj.service_interest || obj.service || '').toLowerCase(),
+        message: obj.message || obj.pain_point || '',
+        status: obj.status || obj.meeting_status || 'New',
+        progress: obj.progress || '',
+        notes: obj.notes || '',
+        ref: obj.reference || obj.reference_number || obj.ref || '',
+        created: obj.timestamp || obj.date_added || obj.created || '',
         projectStarted: obj.project_started || obj.started || 'No',
-        startDate:      obj.start_date || obj.project_start || '',
-        endDate:        obj.end_date || obj.project_end || obj.target_end_date || '',
-        deliverables:   obj.deliverables || '',
-        invoiceStatus:  obj.invoice_status || 'Not Sent',
-        invoiceAmount:  obj.invoice_amount || obj.amount || '',
-        meetingStatus:  obj.meeting_status || '',
-        meetingDate:    obj.meeeting_date || obj.meeting_date || '',
-        meetingTime:    obj.meeting_time || '',
-        source:         obj.source || '',
-        has_email:      (obj.has_email || '').toLowerCase() === 'true',
-        has_whatsapp:   (obj.has_whatsapp || '').toLowerCase() === 'true',
+        startDate: obj.start_date || obj.project_start || '',
+        endDate: obj.end_date || obj.project_end || obj.target_end_date || '',
+        deliverables: obj.deliverables || '',
+        invoiceStatus: obj.invoice_status || 'Not Sent',
+        invoiceAmount: obj.invoice_amount || obj.amount || '',
+        meetingStatus: obj.meeting_status || '',
+        meetingDate: obj.meeeting_date || obj.meeting_date || '',
+        meetingTime: obj.meeting_time || '',
+        source: obj.source || '',
+        has_email: (obj.has_email || '').toLowerCase() === 'true',
+        has_whatsapp: (obj.has_whatsapp || '').toLowerCase() === 'true',
       };
-    }).filter(l => l.name); // skip rows with no name
-
-    console.log(`[Sheet GET] Leads parsed: ${leads.length}`);
+    }).filter(l => l.name);
 
     return NextResponse.json({ leads, source: 'sheet', total: leads.length }, { headers: CORS });
-
   } catch (e) {
     console.error('[Sheet GET] Exception:', e.message);
-    return NextResponse.json({ leads: getMockLeads(), source: 'mock' }, { headers: CORS });
+    return NextResponse.json({ error: 'Could not read the sheet' }, { status: 500, headers: CORS });
   }
 }
 
-// ── PUT — save a lead edit back to the sheet via Make webhook ─────────────────
+// ── PUT — save a lead edit (signed-in users only) ─────────────────────────────
 export async function PUT(request) {
+  const session = await auth();
+  if (!session?.user?.email) return unauthorized();
+
+  const MAKE_CRM_WEBHOOK = process.env.MAKE_CRM_WEBHOOK_URL;
+  if (!MAKE_CRM_WEBHOOK) return configError('MAKE_CRM_WEBHOOK_URL');
+
   try {
     const body = await request.json();
-
-    // Validate — must have a row number to know which row to update
     if (!body._row || body._row < 2) {
-      return NextResponse.json(
-        { success: false, error: 'Missing or invalid _row number' },
-        { status: 400, headers: CORS }
-      );
+      return NextResponse.json({ success: false, error: 'Missing or invalid _row number' }, { status: 400, headers: CORS });
     }
 
-    // Forward to Make webhook — Make will update the Google Sheet row
     const payload = {
-      _row:           body._row,
-      name:           body.name           || '',
-      email:          body.email          || '',
-      phone:          body.phone          || '',
-      company:        body.company        || '',
-      service:        body.service        || '',
-      message:        body.message        || '',
-      status:         body.status         || 'New',
-      progress:       body.progress       || '',
-      notes:          body.notes          || '',
-      projectStarted: body.projectStarted || 'No',
-      startDate:      body.startDate      || '',
-      endDate:        body.endDate        || '',
-      deliverables:   body.deliverables   || '',
-      invoiceStatus:  body.invoiceStatus  || 'Not Sent',
-      invoiceAmount:  body.invoiceAmount  || '',
-      meetingStatus:  body.meetingStatus  || '',
-      meetingDate:    body.meetingDate    || '',
-      meetingTime:    body.meetingTime    || '',
-      _source:        'dashboard',
-      _timestamp:     new Date().toISOString(),
+      _row: body._row,
+      name: body.name || '', email: body.email || '', phone: body.phone || '',
+      company: body.company || '', service: body.service || '', message: body.message || '',
+      status: body.status || 'New', progress: body.progress || '', notes: body.notes || '',
+      projectStarted: body.projectStarted || 'No', startDate: body.startDate || '', endDate: body.endDate || '',
+      deliverables: body.deliverables || '', invoiceStatus: body.invoiceStatus || 'Not Sent',
+      invoiceAmount: body.invoiceAmount || '', meetingStatus: body.meetingStatus || '',
+      meetingDate: body.meetingDate || '', meetingTime: body.meetingTime || '',
+      _source: 'dashboard', _timestamp: new Date().toISOString(),
     };
 
     const makeRes = await fetch(MAKE_CRM_WEBHOOK, {
-      method:  'POST',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(payload),
+      body: JSON.stringify(payload),
     });
 
     if (!makeRes.ok) {
       const errText = await makeRes.text();
       console.error('[Sheet PUT] Make webhook error:', errText);
-      return NextResponse.json(
-        { success: false, error: 'Make webhook failed', detail: errText },
-        { status: 502, headers: CORS }
-      );
+      return NextResponse.json({ success: false, error: 'Make webhook failed' }, { status: 502, headers: CORS });
     }
 
     return NextResponse.json({ success: true, row: body._row }, { headers: CORS });
-
   } catch (e) {
     console.error('[Sheet PUT] Exception:', e.message);
-    return NextResponse.json(
-      { success: false, error: e.message },
-      { status: 500, headers: CORS }
-    );
+    return NextResponse.json({ success: false, error: 'Update failed' }, { status: 500, headers: CORS });
   }
-}
-
-// ── Mock data (dev fallback when no API key) ──────────────────────────────────
-function getMockLeads() {
-  return [
-    { _row:2, name:'Daryl',   email:'sanelesishange@outlook.com', phone:'',           company:'',                   service:'automate', message:'',                                                     status:'New',         progress:'10',  notes:'',                                               ref:'INK-GEN-2026-1001', created:'2026-03-25', projectStarted:'No',  startDate:'',         endDate:'',           deliverables:'',                                              invoiceStatus:'Not Sent', invoiceAmount:'',    meetingStatus:'', meetingDate:'', meetingTime:'' },
-    { _row:3, name:'Pisces',  email:'sanelesishange@outlook.com', phone:'27658804122', company:'',                   service:'learn',    message:'Low AI literacy among staff',                          status:'Contacted',   progress:'35',  notes:'',                                               ref:'INK-GEN-2026-9539', created:'2026-03-26', projectStarted:'No',  startDate:'',         endDate:'',           deliverables:'',                                              invoiceStatus:'Not Sent', invoiceAmount:'',    meetingStatus:'', meetingDate:'', meetingTime:'' },
-    { _row:4, name:'Garry',   email:'sanelesishange@outlook.com', phone:'27658804122', company:'',                   service:'automate', message:'Getting leads and spending money on ads with no ROI',  status:'Contacted',   progress:'35',  notes:'Interested in WhatsApp automation',              ref:'INK-GEN-2026-2233', created:'2026-03-27', projectStarted:'No',  startDate:'',         endDate:'',           deliverables:'',                                              invoiceStatus:'Sent',     invoiceAmount:'8500',meetingStatus:'', meetingDate:'', meetingTime:'' },
-    { _row:5, name:'James',   email:'sanelesishange@outlook.com', phone:'658804122',   company:'Shandu Attorneys',   service:'learn',    message:'Staff cannot use AI tools effectively',                status:'Contacted',   progress:'35',  notes:'',                                               ref:'INK-GEN-2026-3344', created:'2026-03-28', projectStarted:'No',  startDate:'',         endDate:'',           deliverables:'',                                              invoiceStatus:'Not Sent', invoiceAmount:'',    meetingStatus:'Booked', meetingDate:'2026-04-10', meetingTime:'10:00' },
-    { _row:6, name:'Lenovo',  email:'sanelesishange@outlook.com', phone:'27658804122', company:'Ocean Hardware',      service:'automate', message:'No documented SOPs for repair operations',             status:'In Progress', progress:'65',  notes:'Client approved proposal',                       ref:'INK-GEN-2026-8994', created:'2026-03-30', projectStarted:'Yes', startDate:'2026-04-01', endDate:'2026-04-30', deliverables:'WhatsApp AI agent + Google Sheets CRM',         invoiceStatus:'Sent',     invoiceAmount:'22000',meetingStatus:'Meeting Held', meetingDate:'2026-04-02', meetingTime:'14:00' },
-    { _row:7, name:'Jeffery', email:'sanelesishange@outlook.com', phone:'27658804122', company:'',                   service:'learn',    message:'Administration and lead generation is manual',         status:'New',         progress:'10',  notes:'',                                               ref:'INK-GEN-2026-4567', created:'2026-03-31', projectStarted:'No',  startDate:'',         endDate:'',           deliverables:'',                                              invoiceStatus:'Not Sent', invoiceAmount:'',    meetingStatus:'', meetingDate:'', meetingTime:'' },
-    { _row:8, name:'Thabo',   email:'sishangesanele@gmail.com',   phone:'27658804122', company:'Shandu Civils',      service:'automate', message:'Manual invoicing and admin paperwork',                 status:'Won',         progress:'100', notes:'Contract signed — delivered successfully',       ref:'INK-CON-2026-4827', created:'2026-03-30', projectStarted:'Yes', startDate:'2026-03-15', endDate:'2026-03-30', deliverables:'WhatsApp AI bot + Make.com + CRM',              invoiceStatus:'Paid',     invoiceAmount:'18500',meetingStatus:'Meeting Held', meetingDate:'2026-03-18', meetingTime:'09:00' },
-  ];
 }
