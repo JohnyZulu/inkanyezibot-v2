@@ -1,5 +1,6 @@
 'use client';
 import AgentChat from './AgentChat';
+import UserMenu from './UserMenu';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
@@ -239,6 +240,7 @@ export default function Dashboard() {
 
       {/* Floating Inkanyezi Agent chat */}
       <AgentChat C={C} dark={dark} />
+      <UserMenu C={C} dark={dark} />
 
       {/* Stars */}
       {dark&&(
