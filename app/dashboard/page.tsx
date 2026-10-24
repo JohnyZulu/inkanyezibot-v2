@@ -301,6 +301,7 @@ export default function Dashboard() {
               {dark?'☀':'🌙'}
             </button>
             <button onClick={()=>setAddOpen(true)} style={{background:'linear-gradient(135deg,#F4B942,#FF6B35)',border:'none',color:'#0A1628',padding:'6px 12px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'inherit'}}>+ Lead</button>
+            <UserMenu C={C} dark={dark} />
           </div>
         </div>
       )}
