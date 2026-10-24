@@ -240,7 +240,7 @@ export default function Dashboard() {
 
       {/* Floating Inkanyezi Agent chat */}
       <AgentChat C={C} dark={dark} />
-      <UserMenu C={C} dark={dark} />
+    
 
       {/* Stars */}
       {dark&&(
@@ -322,6 +322,7 @@ export default function Dashboard() {
                 </button>
                 {saveMsg&&<span style={{fontSize:12,color:saveMsg.startsWith('✓')?'#3d9e6e':'#ef9f27',fontWeight:600,padding:'7px 12px',borderRadius:8,background:saveMsg.startsWith('✓')?'rgba(61,158,110,0.1)':'rgba(239,159,39,0.1)',border:`1px solid ${saveMsg.startsWith('✓')?'rgba(61,158,110,0.3)':'rgba(239,159,39,0.3)'}`}}>{saveMsg}</span>}
               <button onClick={load} style={{background:'transparent',border:`1px solid ${C.border}`,color:C.muted,padding:'7px 16px',borderRadius:8,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>↻ Refresh</button>
+                <UserMenu C={C} dark={dark} />
               </div>
             </div>
           )}
