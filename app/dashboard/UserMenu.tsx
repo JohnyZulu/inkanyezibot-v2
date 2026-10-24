@@ -1,8 +1,8 @@
 'use client';
 
 // app/dashboard/UserMenu.tsx
-// Profile avatar + sign-out menu for the dashboard header.
-// Shows who is signed in (from /api/me) and signs out via the Auth.js endpoint.
+// Inline profile avatar + sign-out menu — sits in the header row next to
+// the Light / Refresh buttons. Shows who is signed in (from /api/me).
 
 import { useState, useEffect, useRef } from 'react';
 
@@ -28,11 +28,11 @@ export default function UserMenu({ C, dark }: { C: Theme; dark: boolean }) {
   }, []);
 
   useEffect(() => {
-    function onDocClick(e: MouseEvent) {
+    function onDoc(e: MouseEvent) {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     }
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
   async function signOut() {
@@ -46,8 +46,8 @@ export default function UserMenu({ C, dark }: { C: Theme; dark: boolean }) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ csrfToken, callbackUrl: '/dashboard' }),
       });
-    } catch { /* fall through to redirect */ }
-    window.location.href = '/dashboard'; // session cleared → bounces to login
+    } catch { /* fall through */ }
+    window.location.href = '/dashboard';
   }
 
   const initial = (email || '?').trim().charAt(0).toUpperCase();
@@ -59,10 +59,10 @@ export default function UserMenu({ C, dark }: { C: Theme; dark: boolean }) {
         aria-label="Account"
         title={email || 'Account'}
         style={{
-          width: 34, height: 34, borderRadius: '50%', border: 'none', cursor: 'pointer',
-          background: `linear-gradient(135deg, ${C.gold}, ${C.orange})`,
+          width: 34, height: 34, borderRadius: '50%', border: `1px solid ${C.borderHover}`,
+          cursor: 'pointer', background: `linear-gradient(135deg, ${C.gold}, ${C.orange})`,
           color: '#0A1628', fontWeight: 700, fontSize: 14, fontFamily: 'inherit',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
         }}
       >
         {initial}
@@ -70,7 +70,7 @@ export default function UserMenu({ C, dark }: { C: Theme; dark: boolean }) {
 
       {open && (
         <div style={{
-          position: 'absolute', top: 44, right: 0, zIndex: 650, minWidth: 220,
+          position: 'absolute', top: 42, right: 0, zIndex: 650, minWidth: 220,
           background: C.modalBg, border: `1px solid ${C.borderHover}`, borderRadius: 12,
           boxShadow: '0 12px 32px rgba(0,0,0,0.4)', overflow: 'hidden',
         }}>
