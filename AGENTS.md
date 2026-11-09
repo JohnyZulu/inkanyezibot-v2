@@ -8,7 +8,15 @@
 
 ## 📍 Build Status — living section, keep updated
 
-**Last updated:** 2026-09-04 · **Current phase:** Phase 1 (Internal Operations) · **Stage:** Day 3 — first tool
+**Last updated:** 2026-11-09 · **Current phase:** Phase 1 (Internal Operations) · **Stage:** Day 3 — first tool
+
+### Milestone 1 — headless paid-order core (PR #3)
+
+- Added private Supabase commerce tables and service-role-only `public.commerce_*` functions; server-priced orders and stock holds; Paystack TEST checkout, signed webhook and server-side verification; idempotent payment application, fulfilment tasks, transactional alert outbox, worker, owner test dashboard and payment return page. No AI or WhatsApp in this milestone.
+- **Review status (2026-11-09, source `a5a3f7c`): MERGE AFTER FIXES.** The fix upload placed revised files at the repo root; active routes/libraries and the documented `supabase/` scripts still use the earlier implementation. Move the replacements into their intended paths, then fix the remaining reconcile ordering/lease and multi-item expiry deadlock issues. See `docs/commerce-review-02.md` for evidence and reproduction commands.
+- **Verified locally by Codex:** real PostgreSQL **16.15**, canonical SQL **21/21** and proposed root SQL **24/24**, each suite leaving **0 stores / 0 orders**; `anon`/`authenticated` execute **0** public commerce functions and cannot use the private schema; public API functions are security definers with a fixed search path. Two-session S1/S2 oversell with canonical SQL and are safe with the proposed SQL. These checks do not establish that the proposed SQL is deployed.
+- **Further tests:** proposed SQL fails regression tests for rotation after worker deferrals, overlapping reconciliation claims, and multi-item expiry/payment deadlock. The proposed worker passes four JS checks (provider-hang simulation: **39s virtual time**, no running jobs, nine attempts deferred); active worker fails three of those checks (**380s virtual time**). Signature HMAC tests pass. `next build` passes after installing existing declared dependencies, with Auth.js/Jose Edge warnings; `npm ci` is blocked by the pre-existing missing lockfile. No project dependencies were added.
+- **Still UNVERIFIED:** a real Supabase project and its PostgREST/roles, pg_cron, Vault and pg_net setup; a real Paystack TEST initialize → checkout → verify/webhook round-trip and account ZAR support. Sanele must run the documented exit checks. Concurrent S1/S2 were tested locally on PostgreSQL; the reported ten-buyer/stress results have **not** been independently re-run in this review. Broader concurrency and production behavior remain unverified.
 
 ### ✅ Done, committed & verified in production
 - `AGENTS.md` — this engineering context brief
