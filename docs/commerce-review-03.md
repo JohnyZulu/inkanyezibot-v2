@@ -1,5 +1,7 @@
 # Milestone 1 patch verification — 9 November 2026
 
+Historical review, superseded by [review 04](commerce-review-04.md).
+
 Verdict: **merge after fixes**. Applied and pushed the supplied review-02 patch at `0807f86` as **`1202b5ece7931eaf5a0c43538892c142a7b52e22`**, with the requested message:
 
 > Fix Codex review 02: leased one-at-a-time reconcile, deadlock-free expiry, canonical paths
