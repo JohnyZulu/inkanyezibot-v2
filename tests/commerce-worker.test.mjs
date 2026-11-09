@@ -9,7 +9,7 @@ import test from 'node:test';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
+async function sandbox({ attempts = 20, alertCount = 10, rpcDelayMs = 0, verifySucceeds = false } = {}) {
   let clock = 0;
   const calls = [];
   const references = Array.from({ length: attempts }, (_, i) => ({ reference: `REVIEW-${i}` }));
@@ -22,10 +22,25 @@ async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
     Buffer, AbortController,
     console: { log() {}, warn() {}, error() {} },
     Date: class extends Date { static now() { return clock; } },
-    // Advance virtual time to each provider timeout; no real network or wall-clock waits.
-    setTimeout(callback, ms) { clock += ms; callback(); return 1; },
+    // A successful verify finishes just before its 15s timeout; other providers time out.
+    // No real network or wall-clock waits.
+    setTimeout(callback, ms) {
+      if (verifySucceeds && ms === 15000) { clock += 14900; return 1; }
+      clock += ms;
+      callback();
+      return 1;
+    },
     clearTimeout() {},
     async fetch(_url, { signal }) {
+      if (verifySucceeds && _url.startsWith('https://api.paystack.co/transaction/verify/')) {
+        return {
+          status: 200,
+          json: async () => ({ status: true, data: {
+            status: 'success', reference: decodeURIComponent(_url.split('/').at(-1)),
+            amount: 100, currency: 'ZAR', id: 1,
+          } }),
+        };
+      }
       assert.equal(signal.aborted, true);
       const err = new Error('Provider timeout');
       err.name = 'AbortError';
@@ -33,7 +48,9 @@ async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
     },
   });
   async function rpc(name, args = {}) {
+    clock += rpcDelayMs;
     calls.push({ name, args });
+    if (name === 'commerce_apply_verified_payment') return { outcome: 'applied' };
     if (name === 'commerce_release_expired_reservations') return 0;
     if (name === 'commerce_claim_reconcile_attempt') {
       const next = references.shift();
@@ -141,4 +158,13 @@ test('webhook signature accepts the raw-body HMAC and rejects wrong length/value
   assert.equal(verifyWebhookSignature(body, signature.slice(1), secret), false);
   assert.equal(verifyWebhookSignature(body, '0'.repeat(128), secret), false);
   assert.equal(verifyWebhookSignature(body.trim(), signature, secret), false);
+});
+
+test('worker budget includes slow successful DB calls and successful verification', async () => {
+  const s = await sandbox({ rpcDelayMs: 7000, verifySucceeds: true });
+  const cron = await s.run('cron');
+  const response = await cron.GET({ headers: new Headers({ authorization: 'Bearer test-cron' }) });
+  assert.equal(response.body.ok, true);
+  console.log('slow DB summary:', { elapsed: s.elapsed, response: response.body });
+  assert.ok(s.elapsed < cron.maxDuration * 1000, `worker took ${s.elapsed}ms although every DB call finished in 7s, inside the 8s timeout`);
 });

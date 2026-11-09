@@ -1,5 +1,7 @@
 # Milestone 1 follow-up review — 9 November 2026
 
+Historical review: the implementation and test API described below were replaced by the Task 03 patch. See [review 03](commerce-review-03.md) for current results and commands.
+
 Source reviewed: PR #3, `a5a3f7c903ce902098fffaead022863ddb5406b1`.
 Verdict: **merge after fixes**. All three original threads remain **not resolved**.
 Only documentation and regression tests were changed in this review. No commerce function semantics, dependency declarations, agent files or existing routes were changed.

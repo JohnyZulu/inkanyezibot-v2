@@ -207,6 +207,7 @@ class CommerceReview(unittest.TestCase):
         first, second = self.session('claim-first'), self.session('claim-second')
         first.send('begin; select reference from public.commerce_claim_reconcile_attempt(60);\n\\echo CLAIMED')
         claimed = first.until('CLAIMED')
+        self.assertIn(attempt['reference'], claimed, 'first worker must actually obtain the claim')
         second.send('select reference from public.commerce_claim_reconcile_attempt(60);\n\\echo DURING')
         during = second.until('DURING')
         first.send('commit;\n\\echo COMMITTED')
@@ -217,6 +218,49 @@ class CommerceReview(unittest.TestCase):
         print('Overlapping claims:', dict(first=claimed, during=during, after=after), flush=True)
         self.assertNotIn(attempt['reference'], during)
         self.assertNotIn(attempt['reference'], after, 'row locks do not survive the claim RPC; need an expiring lease')
+
+    def test_22_expired_claim_rejects_stale_wrong_and_null_tokens(self):
+        self.isolate_attempts()
+        _, attempt, _ = fixture('review-lease-owner')
+        reference = attempt['reference']
+        sql(f"update commerce.payment_attempts set created_at=now()-interval '10 minutes' where reference='{reference}';")
+        def claim(seconds):
+            return json.loads(sql(f'select row_to_json(c) from public.commerce_claim_reconcile_attempt({seconds}) c;'))
+        first = claim(60)
+        self.assertEqual(sql(f"select public.commerce_release_reconcile_claim('{reference}',null);"), 'f')
+        self.assertEqual(sql(f"select public.commerce_release_reconcile_claim('{reference}',gen_random_uuid());"), 'f')
+        sql(f"update commerce.payment_attempts set reconcile_lease_until=clock_timestamp()-interval '1 second' where reference='{reference}';")
+        second = claim(60)
+        self.assertNotEqual(first['claim_token'], second['claim_token'])
+        self.assertEqual(sql(f"select public.commerce_release_reconcile_claim('{reference}','{first['claim_token']}');"), 'f')
+        self.assertEqual(sql(f"select reconcile_claim_token from commerce.payment_attempts where reference='{reference}';"), second['claim_token'])
+        self.assertEqual(sql(f"select public.commerce_release_reconcile_claim('{reference}','{second['claim_token']}');"), 't')
+        for seconds, low, high in [('1', 9, 11), ('9999', 299, 301), ('null', 59, 61)]:
+            current = claim(seconds)
+            remaining = float(sql(f"select extract(epoch from reconcile_lease_until-clock_timestamp()) from commerce.payment_attempts where reference='{reference}';"))
+            self.assertTrue(low <= remaining <= high, (seconds, remaining))
+            self.assertEqual(sql(f"select public.commerce_release_reconcile_claim('{reference}','{current['claim_token']}');"), 't')
+        print('Lease ownership: null/wrong/stale refused; new token preserved; 10/300/default-60s clamps pass', flush=True)
+
+    def test_23_payment_application_preserves_live_lease_and_is_idempotent(self):
+        self.isolate_attempts()
+        order, attempt, _ = fixture('review-pay-leased')
+        reference = attempt['reference']
+        sql(f"update commerce.payment_attempts set created_at=now()-interval '10 minutes' where reference='{reference}';")
+        claim = json.loads(sql('select row_to_json(c) from public.commerce_claim_reconcile_attempt(60) c;'))
+        lease_query = f"select json_build_array(reconcile_claim_token,reconcile_lease_until) from commerce.payment_attempts where reference='{reference}';"
+        before = sql(lease_query)
+        result = json.loads(sql(apply(attempt)))
+        self.assertEqual(result['outcome'], 'applied')
+        self.assertFalse(result['on_hold'])
+        self.assertEqual(sql(lease_query), before, 'apply must not overwrite the live lease')
+        self.assertEqual(sql('select reference from public.commerce_claim_reconcile_attempt(60);'), '')
+        self.assertEqual(sql(f"select public.commerce_release_reconcile_claim('{reference}','{claim['claim_token']}');"), 't')
+        self.assertEqual(json.loads(sql(apply(attempt)))['outcome'], 'duplicate')
+        self.assertEqual(sql(f"select count(*) from commerce.stock_reservations where order_id='{order['order_id']}' and status='allocated'; "
+                             f"select count(*) from commerce.handoff_tasks where active_key='pack:{order['order_id']}'; "
+                             f"select count(*) from commerce.jobs where dedup_key='notify_paid:{order['order_id']}';"), '1\n1\n1')
+        print('Payment during live lease: lease unchanged, succeeded excluded, owner releases, no duplicate allocation/task/job', flush=True)
 
     def test_30_expiry_and_multiline_payment_have_consistent_reservation_lock_order(self):
         order, attempt, _ = fixture('review-deadlock', items=2)
@@ -251,6 +295,22 @@ class CommerceReview(unittest.TestCase):
         print('Expiry/payment concurrency:', results, flush=True)
         self.assertNotIn('deadlock detected', results)
         self.assertNotIn('ERROR:', results)
+
+    def test_31_skipped_expired_hold_is_available_and_released_next_run(self):
+        order, _, create = fixture('review-skip-expired', units=1)
+        sql(f"update commerce.stock_reservations set expires_at=clock_timestamp()-interval '1 minute' where order_id='{order['order_id']}';")
+        locker = self.session('expired-hold-locker')
+        locker.send(f"begin; select id from commerce.stock_reservations where order_id='{order['order_id']}' for update;\n\\echo LOCKED")
+        locker.until('LOCKED')
+        self.assertEqual(sql('select public.commerce_release_expired_reservations();'), '0')
+        self.assertEqual(sql(f"select status from commerce.stock_reservations where order_id='{order['order_id']}';"), 'active')
+        self.assertEqual(sql(f"select commerce.available_qty(product_id) from commerce.stock_reservations where order_id='{order['order_id']}';"), '1')
+        self.assertTrue(json.loads(sql(create('second')))['ok'], 'expired row must not block a new purchase')
+        locker.send('rollback;\n\\echo UNLOCKED')
+        locker.until('UNLOCKED')
+        self.assertGreaterEqual(int(sql('select public.commerce_release_expired_reservations();')), 1)
+        self.assertEqual(sql(f"select status from commerce.stock_reservations where order_id='{order['order_id']}';"), 'released')
+        print('Locked expired hold: skipped without waiting, availability free, buyer succeeds, next run releases it', flush=True)
 
 
 if __name__ == '__main__':
