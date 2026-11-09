@@ -145,6 +145,12 @@ When 1–10 pass, Milestone 1 (Phases 1 + the thin slice of 2 from v0.3) is done
 - Hold deadline set by the real clock; every Supabase call has an 8s timeout.
 - Codex's regression suites (`tests/commerce-postgres-review.py`, `tests/commerce-worker.test.mjs`) pass against the canonical paths: 6/6 and 4/4.
 
+**Codex review 03 fix (9 Nov 2026) — worker time budget includes the database:**
+- Each unit of work starts only if its *whole* worst case fits: one payment check = claim + Paystack verify + apply + release (40s); one alert = claim + delivery + complete (25s); every DB call is capped at 8s. Work must finish by 50s of the 60s route limit.
+- Codex's slow-DB case (every DB call 7s, successful 14.9s verify) now finishes in **29s** (was 64.9s). A sweep of every DB latency from 0–8s × verify success/timeout (34 combinations) stays ≤ **43.5s**, leaves no job running or claim unreleased, and always makes progress.
+- The webhook now sends its inline owner alert with Next.js `after()` (after Paystack gets its 200), bounded the same way.
+- Suites: `tests/commerce-postgres-review.py` **9/9**, `tests/commerce-worker.test.mjs` **6/6**.
+
 **Not yet verified (needs your accounts):**
 - Real Supabase project (Supabase-specific roles, pg_cron, Vault, pg_net).
 - Real Paystack test-mode initialize/verify/webhook round-trip, and ZAR availability on your Paystack account (D5 still "candidate").

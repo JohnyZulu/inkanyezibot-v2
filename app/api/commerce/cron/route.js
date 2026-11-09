@@ -3,9 +3,11 @@
 // sends Bearer CRON_SECRET automatically), or the owner's "Run worker now" button.
 //   • release lapsed stock holds   • deliver owner alerts   • reconcile unpaid attempts with Paystack
 //
-// Time budget (Codex review P2): everything must finish inside maxDuration even when Paystack or
-// the alert webhook is slow. Each step gets a deadline and only starts work that fits; anything
-// left over is picked up first on the next run (fair rotation in the database).
+// Time budget (Codex reviews P2 + 03): the route must finish inside maxDuration even when the
+// database AND Paystack AND the alert webhook are all slow. Every unit of work (one alert, one
+// payment check) starts only if its whole worst case — every DB call at its 8s timeout, plus the
+// provider call at its timeout — still fits before the work deadline. The first DB call (release
+// holds) is itself at most 8s. Anything not reached is first in line next run (fair rotation).
 
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
@@ -19,7 +21,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const WORK_BUDGET_MS = 45000;   // 15s headroom under maxDuration for auth, DB calls and the response
+const WORK_BUDGET_MS = 50000;   // every claimed unit finishes by here; 10s left for auth + response
 
 function bearerMatches(req, secret) {
   if (!secret) return false;
@@ -41,7 +43,7 @@ async function run(req) {
     }
     const released = await rpc('commerce_release_expired_reservations');
     // Alerts first, with a capped share of the budget, so a Paystack outage can't starve them.
-    const jobsBefore = await processJobs(5, Math.min(deadline, Date.now() + 20000));
+    const jobsBefore = await processJobs(5, Math.min(deadline, Date.now() + 30000));
     const reconciled = await reconcilePending(10, deadline);
     // Payments applied just now created new alert jobs — send them if time remains.
     const jobsAfter = await processJobs(5, deadline);

@@ -168,3 +168,24 @@ test('worker budget includes slow successful DB calls and successful verificatio
   console.log('slow DB summary:', { elapsed: s.elapsed, response: response.body });
   assert.ok(s.elapsed < cron.maxDuration * 1000, `worker took ${s.elapsed}ms although every DB call finished in 7s, inside the 8s timeout`);
 });
+
+test('worker stays inside maxDuration for every DB latency up to the 8s timeout, and still makes progress', async () => {
+  const worst = [];
+  for (let rpcDelayMs = 0; rpcDelayMs <= 8000; rpcDelayMs += 500) {
+    for (const verifySucceeds of [false, true]) {
+      const s = await sandbox({ rpcDelayMs, verifySucceeds });
+      const cron = await s.run('cron');
+      const response = await cron.GET({ headers: new Headers({ authorization: 'Bearer test-cron' }) });
+      assert.equal(response.body.ok, true);
+      const label = `rpc=${rpcDelayMs}ms verify=${verifySucceeds ? 'ok@14.9s' : 'timeout'}`;
+      assert.ok(s.elapsed < cron.maxDuration * 1000, `${label}: took ${s.elapsed}ms`);
+      assert.equal(s.jobs.filter(j => j.status === 'running').length, 0, `${label}: job left running`);
+      assert.deepEqual(s.released.map(r => r.p_claim_token), s.claims.map(c => c.claim_token), `${label}: claim not released`);
+      const progress = s.claims.length + s.jobs.filter(j => j.status !== 'pending').length;
+      assert.ok(progress > 0, `${label}: made no progress at all`);
+      worst.push({ label, elapsed: s.elapsed });
+    }
+  }
+  const max = worst.reduce((a, b) => (b.elapsed > a.elapsed ? b : a));
+  console.log('slowest combination:', max);
+});
