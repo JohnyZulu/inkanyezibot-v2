@@ -213,6 +213,57 @@ begin
          where n.nspname='public' and p.proname like 'commerce\_%' and ro.rolname in ('anon','authenticated')
            and has_function_privilege(ro.oid, p.oid, 'execute')), 'd', 'checked pg privileges');
 
+    -- T22 reconciler rotation is fair (Codex review P2): a batch can't be re-served while others wait
+    update commerce.payment_attempts set status = 'cancelled'
+     where store_id = v_store and status in ('pending','unknown');           -- isolate from earlier tests
+    r := public.commerce_create_order('zz-test-suite', '{"email":"rot@example.com"}', '[{"sku":"T-WATCH","qty":1}]', '{"method":"collect"}');
+    insert into commerce.payment_attempts (store_id, order_id, attempt_no, reference, amount_cents, currency, created_at)
+    select v_store, (r->>'order_id')::uuid, n, 'ROT-' || n, 125000, 'ZAR', now() - make_interval(mins => 10 + n)
+      from generate_series(1, 3) n;
+    -- Simulate 4 worker runs that each have time for exactly ONE check: claim → (verify) → release.
+    v_txt := '';
+    for v_int in 1..4 loop
+      select reference, claim_token::text into v_ref, v_num from public.commerce_claim_reconcile_attempt(60);
+      v_txt := v_txt || coalesce(v_ref, '∅') || ' ';
+      perform public.commerce_release_reconcile_claim(v_ref, v_num::uuid);
+    end loop;
+    v_results := v_results || jsonb_build_object('t','T22 reconcile rotation: one-per-run worker checks all 3 before repeating',
+      'ok', v_txt = 'ROT-3 ROT-2 ROT-1 ROT-3 ', 'd', v_txt);   -- oldest first, then least-recently-checked
+
+    -- T23 lease: a live claim can't be re-claimed after commit; wrong token can't release; expired lease can be re-claimed
+    select reference, claim_token::text into v_ref, v_num from public.commerce_claim_reconcile_attempt(60);  -- held, not released
+    v_txt := '';
+    for v_int in 1..3 loop                                    -- other workers keep claiming (and holding) what's left
+      r2 := (select to_jsonb(c) from public.commerce_claim_reconcile_attempt(60) c);
+      v_txt := v_txt || coalesce(r2->>'reference', '∅') || ' ';
+    end loop;
+    r := jsonb_build_object(
+      'held_not_reclaimed', v_txt not like '%' || v_ref || '%' and v_txt like '%∅%',
+      'wrong_token_refused', not public.commerce_release_reconcile_claim(v_ref, gen_random_uuid()),
+      'still_ours', (select reconcile_claim_token::text from commerce.payment_attempts where reference = v_ref) = v_num);
+    update commerce.payment_attempts set reconcile_lease_until = clock_timestamp() - interval '1 second'
+     where reference = v_ref;                                 -- simulate a worker that died: lease runs out
+    select reference into v_txt from public.commerce_claim_reconcile_attempt(60);
+    v_results := v_results || jsonb_build_object('t','T23 lease: in-flight attempt not re-claimable; wrong token refused; expiry frees it',
+      'ok', (r->>'held_not_reclaimed')::bool and (r->>'wrong_token_refused')::bool and (r->>'still_ours')::bool
+            and v_txt = v_ref,
+      'd', r::text || ' reclaimed after expiry: ' || coalesce(v_txt,'∅'));
+
+    -- T24 payment after the hold expired (by the real clock) never allocates the lapsed hold
+    update commerce.products set on_hand = on_hand + 5 where sku = 'T-WATCH' and store_id = v_store;
+    r := public.commerce_create_order('zz-test-suite', '{"email":"clk@example.com"}', '[{"sku":"T-WATCH","qty":1}]', '{"method":"collect"}');
+    update commerce.stock_reservations set expires_at = clock_timestamp() - interval '1 second' where order_id = (r->>'order_id')::uuid;
+    insert into commerce.payment_attempts (store_id, order_id, attempt_no, reference, amount_cents, currency)
+      values (v_store, (r->>'order_id')::uuid, 1, 'CLK-1', 125000, 'ZAR');
+    r2 := public.commerce_apply_verified_payment('CLK-1', 'success', 125000, 'ZAR', 'txn-clk', 'webhook');
+    v_results := v_results || jsonb_build_object('t','T24 expired hold is revalidated, not blindly allocated',
+      'ok', r2->>'outcome' = 'applied' and not (r2->>'on_hold')::bool
+            and (select count(*) from commerce.stock_reservations where order_id = (r->>'order_id')::uuid and status = 'released') = 1
+            and (select count(*) from commerce.stock_reservations where order_id = (r->>'order_id')::uuid and status = 'allocated') = 1
+            and exists (select 1 from commerce.audit_events where entity_id = (r->>'order_id')::uuid
+                          and action = 'late_payment_restocked'),
+      'd', r2::text);
+
     raise exception 'ROLLBACK_TEST_DATA';
   exception
     when raise_exception then

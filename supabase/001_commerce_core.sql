@@ -140,11 +140,15 @@ create table commerce.payment_attempts (
   received_currency      text,
   last_error             text,
   verified_at            timestamptz,
+  last_checked_at        timestamptz,                 -- last time the reconciler claimed it (fair rotation)
+  reconcile_claim_token  uuid,                        -- who is checking it right now
+  reconcile_lease_until  timestamptz,                 -- …and until when (expires if a worker dies)
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now(),
   unique (order_id, attempt_no)
 );
-create index pay_attempt_open_idx on commerce.payment_attempts (created_at) where status in ('pending','unknown');
+create index pay_attempt_open_idx on commerce.payment_attempts (last_checked_at nulls first, created_at, id)
+  where status in ('pending','unknown');
 
 create table commerce.payment_events (
   id            bigserial primary key,
@@ -221,12 +225,15 @@ returns void language sql as $$
   values (p_store, p_entity, p_entity_id, p_action, p_actor, p_from, p_to, coalesce(p_detail, '{}'));
 $$;
 
+-- Expiry is judged by clock_timestamp() (the real time now), NOT now() (the time the
+-- transaction started). Every function that decides "is this hold still live?" uses the
+-- same clock, so two transactions can never disagree about whether a hold has expired.
 create function commerce.available_qty(p_product_id uuid)
-returns integer language sql stable as $$
+returns integer language sql volatile as $$
   select p.on_hand - coalesce((
            select sum(r.qty)::int from commerce.stock_reservations r
            where r.product_id = p.id
-             and (r.status = 'allocated' or (r.status = 'active' and r.expires_at > now()))
+             and (r.status = 'allocated' or (r.status = 'active' and r.expires_at > clock_timestamp()))
          ), 0)
   from commerce.products p where p.id = p_product_id;
 $$;
@@ -378,7 +385,8 @@ begin
   returning id into v_cust_id;
 
   v_number  := v_store.order_prefix || '-' || lpad(nextval('commerce.order_number_seq')::text, 6, '0');
-  v_expires := now() + make_interval(mins => v_store.reservation_minutes);
+  -- Real clock: a long wait for product locks must not shorten the customer's hold.
+  v_expires := clock_timestamp() + make_interval(mins => v_store.reservation_minutes);
 
   insert into orders (store_id, customer_id, order_number, idempotency_key, currency,
                       subtotal_cents, delivery_cents, total_cents, delivery, reservation_expires_at, created_by)
@@ -422,7 +430,7 @@ begin
   end if;
   if exists (select 1 from order_items oi where oi.order_id = v_order.id and not exists (
                select 1 from stock_reservations r where r.order_id = v_order.id and r.product_id = oi.product_id
-                 and r.status = 'active' and r.expires_at > now() + interval '2 minutes')) then
+                 and r.status = 'active' and r.expires_at > clock_timestamp() + interval '2 minutes')) then
     -- Hold expired (or about to): don't send the customer to pay for stock we no longer hold.
     return jsonb_build_object('ok',false,'code','reservation_expired');
   end if;
@@ -522,6 +530,7 @@ declare
   v_order     orders;
   v_store     stores;
   v_all_held  boolean;
+  v_n         int;
   v_on_hold   boolean := false;
   v_short     jsonb := '[]';
   v_item      record;
@@ -604,18 +613,31 @@ begin
   end if;
 
   -- awaiting_payment → confirmed. Convert holds to allocations, or revalidate if holds lapsed.
+  -- Locking (Codex review P1): take the SAME product locks as commerce_create_order, in the
+  -- same id order, so a new order for these SKUs waits until we commit and then sees our
+  -- allocation. Then lock this order's own holds, so the expiry worker cannot release them
+  -- between our check and our update. Lock order everywhere: products → reservations.
+  perform 1 from products where id in (select product_id from order_items where order_id = v_order.id)
+   order by id for update;
+  perform 1 from stock_reservations where order_id = v_order.id order by id for update;
+
   select bool_and(exists (select 1 from stock_reservations r where r.order_id = v_order.id
                             and r.product_id = oi.product_id and r.status = 'active'
-                            and r.expires_at > now() and r.qty = oi.qty))
+                            and r.expires_at > clock_timestamp() and r.qty = oi.qty))
     into v_all_held from order_items oi where oi.order_id = v_order.id;
 
   if v_all_held then
     update stock_reservations set status = 'allocated', updated_at = now()
-     where order_id = v_order.id and status = 'active';
+     where order_id = v_order.id and status = 'active' and expires_at > clock_timestamp();
+    get diagnostics v_n = row_count;
+    if v_n <> (select count(*) from order_items where order_id = v_order.id) then
+      -- Should be impossible with the locks above. If it ever happens, roll back everything:
+      -- the webhook returns 500 and Paystack / the reconciler retries on a clean state.
+      raise exception 'allocation mismatch for order % (% of % lines)', v_order.order_number, v_n,
+        (select count(*) from order_items where order_id = v_order.id);
+    end if;
   else
-    -- Late payment: release whatever is left of our holds, then re-check stock atomically.
-    perform 1 from products where id in (select product_id from order_items where order_id = v_order.id)
-     order by id for update;
+    -- Late payment: release whatever is left of our holds, then re-check stock (products already locked).
     update stock_reservations set status = 'released', updated_at = now()
      where order_id = v_order.id and status = 'active';
     for v_item in select oi.product_id, oi.sku, oi.qty from order_items oi where oi.order_id = v_order.id loop
@@ -666,22 +688,64 @@ returns integer
 language plpgsql security definer set search_path = commerce, pg_temp as $$
 declare v_n int;
 begin
+  -- Deadlock-free (Codex review 02, finding 4): lock candidates in id order and SKIP any hold
+  -- another transaction has locked (e.g. a payment deciding that order right now). A skipped
+  -- hold is either converted by that payment or released on the next run (every minute).
   update stock_reservations set status = 'released', updated_at = now()
-   where status = 'active' and expires_at <= now();
+   where id in (select id from stock_reservations
+                 where status = 'active' and expires_at <= clock_timestamp()
+                 order by id
+                 for update skip locked);
   get diagnostics v_n = row_count;
   return v_n;
 end $$;
 
--- 6) Attempts the reconciler should re-check with Paystack (missed/late webhooks).
-create function public.commerce_list_reconcilable_attempts(p_limit int default 20)
-returns table (reference text, status text, created_at timestamptz)
-language sql security definer set search_path = commerce, pg_temp as $$
-  select a.reference, a.status, a.created_at from payment_attempts a
-   where a.status in ('pending','unknown')
-     and a.created_at < now() - interval '3 minutes'
-     and a.created_at > now() - interval '48 hours'
-   order by a.created_at desc limit least(p_limit, 50);   -- newest first
-$$;
+-- 6) Reconciler: claim ONE unpaid attempt to re-check with Paystack (missed/late webhooks).
+--    (Codex review 02, findings 2 + 3)
+--    • Fair: least-recently-checked first (never-checked first), ties by age then id — and an
+--      attempt is claimed only right before it is verified, so nothing is claimed-then-skipped.
+--    • Lease: the claim carries a random token and expires (default 60s). Overlapping worker
+--      runs cannot claim an attempt whose lease is live, even after this call has committed.
+--      If a worker dies mid-check, the lease simply expires and the attempt is claimable again.
+--    No database transaction is held open while Paystack is called.
+create function public.commerce_claim_reconcile_attempt(p_lease_seconds int default 60)
+returns table (reference text, claim_token uuid)
+language plpgsql security definer set search_path = commerce, pg_temp as $$
+#variable_conflict use_column
+declare
+  v_id    uuid;
+  v_token uuid := gen_random_uuid();
+begin
+  select x.id into v_id from payment_attempts x
+   where x.status in ('pending','unknown')
+     and x.created_at < now() - interval '3 minutes'
+     and x.created_at > now() - interval '48 hours'
+     and (x.reconcile_lease_until is null or x.reconcile_lease_until <= clock_timestamp())
+   order by x.last_checked_at nulls first, x.created_at, x.id
+   limit 1
+   for update skip locked;
+  if v_id is null then return; end if;
+
+  update payment_attempts a
+     set last_checked_at = clock_timestamp(),
+         reconcile_claim_token = v_token,
+         reconcile_lease_until = clock_timestamp() + make_interval(secs => greatest(10, least(coalesce(p_lease_seconds, 60), 300)))
+   where a.id = v_id;
+
+  return query select a.reference, v_token from payment_attempts a where a.id = v_id;
+end $$;
+
+-- Finish a claim. Only the holder of the token can release it (a stale worker whose lease
+-- expired and was re-claimed by someone else gets false and changes nothing).
+create function public.commerce_release_reconcile_claim(p_reference text, p_claim_token uuid)
+returns boolean
+language plpgsql security definer set search_path = commerce, pg_temp as $$
+begin
+  update payment_attempts
+     set reconcile_claim_token = null, reconcile_lease_until = null
+   where reference = p_reference and reconcile_claim_token = p_claim_token;
+  return found;
+end $$;
 
 -- 7) Outbox: claim due jobs (skip-locked, reclaims jobs stuck > 10 min), then complete.
 create function public.commerce_claim_jobs(p_limit int default 10)
@@ -744,8 +808,11 @@ begin
   if coalesce(trim(p_courier),'') = '' then return jsonb_build_object('ok',false,'code','courier_required'); end if;
 
   -- The ONE place physical stock leaves: allocated → consumed, on_hand decremented once.
+  -- Same lock order as everywhere else: products (id order) → reservations.
+  perform 1 from products where id in (select product_id from order_items where order_id = v_order.id)
+   order by id for update;
   for v_r in select r.id, r.product_id, r.qty from stock_reservations r
-              where r.order_id = v_order.id and r.status = 'allocated' order by r.product_id for update loop
+              where r.order_id = v_order.id and r.status = 'allocated' order by r.id for update loop
     update products set on_hand = on_hand - v_r.qty, updated_at = now() where id = v_r.product_id;
     update stock_reservations set status = 'consumed', updated_at = now() where id = v_r.id;
   end loop;

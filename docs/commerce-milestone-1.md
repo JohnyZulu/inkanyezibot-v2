@@ -32,11 +32,13 @@ No AI, no WhatsApp yet.
 
 Supabase → **SQL Editor** → **New query** for each file. Paste the whole file, click **Run**.
 
+> **Already ran an older `001` in this project?** Run `supabase/000_reset_commerce.sql` first (it should end with `0 | 0`). It wipes the commerce schema — test data only, never on a project with real orders. If you're unsure whether you ran it, running the reset is harmless on a fresh project.
+
 | Order | File | Expect |
 |---|---|---|
 | 1 | `supabase/001_commerce_core.sql` | "Success. No rows returned" |
 | 2 | `supabase/002_commerce_tests.sql` | "Success" |
-| 3 | run: `select * from commerce.run_core_tests();` | **21 rows, every `passed` = true** (no rows named CRASH) |
+| 3 | run: `select * from commerce.run_core_tests();` | **24 rows, every `passed` = true** (no rows named CRASH) |
 | 4 | `supabase/003_seed_test_store.sql` | 3 test products listed |
 | 5 | `supabase/004_schedules.sql` (PART A only, as shipped) | `commerce-release-expired-holds` listed, active = true |
 
@@ -125,14 +127,27 @@ When 1–10 pass, Milestone 1 (Phases 1 + the thin slice of 2 from v0.3) is done
 ## What's verified vs not (be honest about this line)
 
 **Verified by Claude before handoff (26 Oct 2026):**
-- All SQL runs on a real PostgreSQL engine; the 21 in-database tests pass and leave no data behind.
+- All SQL runs on a real PostgreSQL engine; the in-database tests pass and leave no data behind.
 - `next build` (incl. type-check) passes with the new files on top of `84b355c`.
 - Running server: forged webhook signature → 401; valid signature + DB down → 500 (Paystack retries); owner routes and `/dashboard/commerce` refuse anonymous access; return page never says "paid" without server verification.
+
+**Codex review fixes (9 Nov 2026), verified on PostgreSQL 16 with real concurrent sessions:**
+- **P1 oversell race (fixed):** payment allocation now takes the same product locks as order creation, locks the order's own holds, judges expiry by the real clock (`clock_timestamp()`), and checks every hold actually converted. Reproduced the oversell on the old code in 2 interleavings; both now safe (new order waits, then gets `insufficient_stock`; or the late payment goes `on_hold` + urgent task).
+- **10 simultaneous buyers for the last unit:** exactly 1 wins.
+- **Stress:** ~49,000 mixed operations on 12 connections (orders, payments, expiry, fulfilment): no deadlocks, no oversell, no paid order without its stock.
+- **P2 reconcile starvation (fixed):** least-recently-checked first, every claimed attempt stamped; attempts not reached are handed back to the front (tests T22–T23).
+- **P2 worker time budget (fixed):** deadline-aware alerts + reconcile; simulated worst case (Paystack and alert webhook both hanging) finishes in ~39s of the 60s limit (was ~380s), no job left stuck.
+- In-database suite now **24 tests** (T22–T24 added).
+
+**Codex follow-up review 02 fixes (9 Nov 2026):**
+- **Reconcile claims are one-at-a-time with an expiring lease** (`commerce_claim_reconcile_attempt` / `commerce_release_reconcile_claim`, replacing the batch list + unclaim): fair rotation survives deferrals, and an overlapping worker can't re-check an attempt still waiting on Paystack. A crashed worker's lease expires after 60s.
+- **Expiry vs multi-line payment deadlock removed:** expiry now locks candidate holds in id order with `SKIP LOCKED`; fulfilment locks reservations by id too.
+- Hold deadline set by the real clock; every Supabase call has an 8s timeout.
+- Codex's regression suites (`tests/commerce-postgres-review.py`, `tests/commerce-worker.test.mjs`) pass against the canonical paths: 6/6 and 4/4.
 
 **Not yet verified (needs your accounts):**
 - Real Supabase project (Supabase-specific roles, pg_cron, Vault, pg_net).
 - Real Paystack test-mode initialize/verify/webhook round-trip, and ZAR availability on your Paystack account (D5 still "candidate").
-- Truly simultaneous last-unit purchases — tested sequentially; concurrency safety relies on Postgres row locks (`FOR UPDATE`), which is the standard mechanism but hasn't been load-tested here.
 
 ## Design notes (for the decision log, §17)
 

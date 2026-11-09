@@ -31,7 +31,8 @@ export async function POST(req) {
   try {
     const r = await handlePaystackEvent(evt);
     // Best effort: send the owner alert now instead of waiting for the next worker run.
-    if (r.outcome === 'applied') await processJobs(3).catch((e) => console.error('[paystack.webhook] jobs:', e.message));
+    // Bounded so the webhook still answers well inside Paystack's 30s timeout.
+    if (r.outcome === 'applied') await processJobs(1, Date.now() + 10000).catch((e) => console.error('[paystack.webhook] jobs:', e.message));
     return NextResponse.json({ received: true, outcome: r.outcome });
   } catch (err) {
     console.error('[paystack.webhook] processing failed:', err.message);

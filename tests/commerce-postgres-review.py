@@ -1,7 +1,7 @@
 """Multi-connection regression checks. Requires Python's stdlib and a disposable PG16 Docker container.
 
-python tests/commerce-postgres-review.py [--uploaded] [--container commerce-review-pg16]
-Default: canonical supabase SQL. --uploaded: proposed SQL incorrectly uploaded at repo root.
+python tests/commerce-postgres-review.py [--container commerce-review-pg16]
+Runs the canonical supabase/ SQL.
 Creates a unique scratch database, then drops it. Never connects to Supabase or Paystack.
 """
 import argparse
@@ -15,7 +15,6 @@ import time
 import unittest
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--uploaded', action='store_true')
 parser.add_argument('--container', default='commerce-review-pg16')
 args = parser.parse_args()
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -113,7 +112,7 @@ class CommerceReview(unittest.TestCase):
             for role in ('anon', 'authenticated', 'service_role')) + "end $$;", db='postgres')
         sql(f'create database {DB};', db='postgres')
         sql('alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;')
-        folder = ROOT if args.uploaded else ROOT / 'supabase'
+        folder = ROOT / 'supabase'
         sql((folder / '001_commerce_core.sql').read_text())
         sql((folder / '002_commerce_tests.sql').read_text())
         print('\nSource:', folder, '\nEngine:', sql('select version();'), flush=True)
@@ -134,7 +133,7 @@ class CommerceReview(unittest.TestCase):
         rows = [json.loads(row) for row in sql('select row_to_json(t) from commerce.run_core_tests() t;').splitlines()]
         for row in rows:
             print(row['test'], row['passed'], flush=True)
-        self.assertEqual(len(rows), 24 if args.uploaded else 21)
+        self.assertEqual(len(rows), 24)
         self.assertTrue(all(row['passed'] is True for row in rows))
         self.assertEqual(sql('select count(*) from commerce.stores; select count(*) from commerce.orders;'), '0\n0')
         self.assertEqual(sql("select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace, "
@@ -192,14 +191,13 @@ class CommerceReview(unittest.TestCase):
             f"cross join generate_series(2,3) n where reference='{attempt['reference']}'; "
             f"update commerce.payment_attempts set created_at=now()-interval '10 minutes' where order_id='{order['order_id']}';")
         checked = []
-        # Mirror a worker with time for one timed-out verify; all other references are handed back.
+        # Mirror a worker with time for one timed-out verify per run: claim one, verify, release.
         for _ in range(8):
-            refs = json.loads(sql('select json_agg(reference) from public.commerce_list_reconcilable_attempts(10);'))
-            checked.append(refs[0])
-            deferred = ','.join("'" + ref + "'" for ref in refs[1:])
-            sql(f'select public.commerce_unclaim_reconcile(array[{deferred}]::text[]);')
+            claim = json.loads(sql('select row_to_json(c) from public.commerce_claim_reconcile_attempt(60) c;'))
+            checked.append(claim['reference'])
+            sql(f"select public.commerce_release_reconcile_claim('{claim['reference']}', '{claim['claim_token']}');")
         print('Rotation verified references:', checked, flush=True)
-        self.assertEqual(len(set(checked)), 3, 'UPDATE RETURNING must preserve fair order before worker deferrals')
+        self.assertEqual(len(set(checked)), 3, 'one-per-run worker must rotate through every eligible attempt')
 
     def test_21_overlapping_workers_cannot_claim_in_flight_verification(self):
         self.isolate_attempts()
@@ -207,14 +205,14 @@ class CommerceReview(unittest.TestCase):
         sql("update commerce.payment_attempts set created_at=now()-interval '10 minutes' "
             f"where reference='{attempt['reference']}';")
         first, second = self.session('claim-first'), self.session('claim-second')
-        first.send('begin; select reference from public.commerce_list_reconcilable_attempts(10);\n\\echo CLAIMED')
+        first.send('begin; select reference from public.commerce_claim_reconcile_attempt(60);\n\\echo CLAIMED')
         claimed = first.until('CLAIMED')
-        second.send('select reference from public.commerce_list_reconcilable_attempts(10);\n\\echo DURING')
+        second.send('select reference from public.commerce_claim_reconcile_attempt(60);\n\\echo DURING')
         during = second.until('DURING')
         first.send('commit;\n\\echo COMMITTED')
         first.until('COMMITTED')
         # RPC has committed but first worker's external verification has not finished.
-        second.send('select reference from public.commerce_list_reconcilable_attempts(10);\n\\echo AFTER')
+        second.send('select reference from public.commerce_claim_reconcile_attempt(60);\n\\echo AFTER')
         after = second.until('AFTER')
         print('Overlapping claims:', dict(first=claimed, during=during, after=after), flush=True)
         self.assertNotIn(attempt['reference'], during)

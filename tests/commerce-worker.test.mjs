@@ -1,5 +1,4 @@
 // No npm dependencies. Run: node --experimental-vm-modules --test tests/commerce-worker.test.mjs
-// COMMERCE_REVIEW_UPLOADED=1 tests the proposed files uploaded at the repository root.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -9,7 +8,6 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const uploaded = process.env.COMMERCE_REVIEW_UPLOADED === '1';
 
 async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
   let clock = 0;
@@ -18,7 +16,8 @@ async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
   const jobs = Array.from({ length: alertCount }, (_, i) => ({
     id: i + 1, kind: 'notify_owner_paid_order', payload: {}, status: 'pending',
   }));
-  const deferred = [];
+  const claims = [];
+  const released = [];
   const context = vm.createContext({
     Buffer, AbortController,
     console: { log() {}, warn() {}, error() {} },
@@ -36,8 +35,14 @@ async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
   async function rpc(name, args = {}) {
     calls.push({ name, args });
     if (name === 'commerce_release_expired_reservations') return 0;
-    if (name === 'commerce_list_reconcilable_attempts') return references.slice(0, args.p_limit);
-    if (name === 'commerce_unclaim_reconcile') { deferred.push(...args.p_references); return; }
+    if (name === 'commerce_claim_reconcile_attempt') {
+      const next = references.shift();
+      if (!next) return [];
+      const claim = { reference: next.reference, claim_token: `token-${claims.length}` };
+      claims.push(claim);
+      return [claim];
+    }
+    if (name === 'commerce_release_reconcile_claim') { released.push(args); return true; }
     if (name === 'commerce_claim_jobs') {
       const claimed = jobs.filter(j => j.status === 'pending').slice(0, args.p_limit);
       claimed.forEach(j => { j.status = 'running'; });
@@ -65,9 +70,9 @@ async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
     'next/server': synthetic('next', { NextResponse: { json: (body, init) => ({ body, ...init }) } }),
   };
   const files = {
-    cron: uploaded ? 'route.js' : 'app/api/commerce/cron/route.js',
-    payments: uploaded ? 'payments.js' : 'lib/commerce/payments.js',
-    jobs: uploaded ? 'jobs.js' : 'lib/commerce/jobs.js',
+    cron: 'app/api/commerce/cron/route.js',
+    payments: 'lib/commerce/payments.js',
+    jobs: 'lib/commerce/jobs.js',
     paystack: 'lib/commerce/paystack.js',
   };
   const modules = {};
@@ -88,24 +93,27 @@ async function sandbox({ attempts = 20, alertCount = 10 } = {}) {
       await mod.evaluate();
       return mod.namespace;
     },
-    calls, jobs, deferred, get elapsed() { return clock; },
+    calls, jobs, claims, released, get elapsed() { return clock; },
   };
 }
 
-test('worker finishes hanging providers inside its 60s route limit and releases untouched work', async () => {
+test('worker finishes hanging providers inside its 60s route limit and releases every claim', async () => {
   const s = await sandbox();
   const cron = await s.run('cron');
   const response = await cron.GET({ headers: new Headers({ authorization: 'Bearer test-cron' }) });
   assert.equal(response.body.ok, true);
   const summary = {
     elapsedMs: s.elapsed, running: s.jobs.filter(j => j.status === 'running').length,
-    deferred: s.deferred.length,
-    firstWork: s.calls.find(c => ['commerce_claim_jobs', 'commerce_list_reconcilable_attempts'].includes(c.name)).name,
+    claimed: s.claims.length,
+    released: s.released.length,
+    firstWork: s.calls.find(c => ['commerce_claim_jobs', 'commerce_claim_reconcile_attempt'].includes(c.name)).name,
   };
   console.log('worker summary:', summary);
   assert.ok(s.elapsed < cron.maxDuration * 1000, `worker took ${s.elapsed}ms with both providers timing out`);
   assert.equal(summary.running, 0);
-  assert.ok(summary.deferred > 0, 'untouched payment attempts must be returned');
+  assert.ok(summary.claimed > 0 && summary.claimed < 20, 'claims only what it can verify; the rest stays free for the next run');
+  assert.equal(summary.released, summary.claimed, 'every claimed attempt must be released with its own token');
+  assert.deepEqual(s.released.map(r => r.p_claim_token), s.claims.map(c => c.claim_token));
   assert.equal(summary.firstWork, 'commerce_claim_jobs', 'alerts must get a turn before slow verification');
 });
 
