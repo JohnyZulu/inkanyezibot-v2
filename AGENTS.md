@@ -8,7 +8,15 @@
 
 ## 📍 Build Status — living section, keep updated
 
-**Last updated:** 2026-09-04 · **Current phase:** Phase 1 (Internal Operations) · **Stage:** Day 3 — first tool
+**Last updated:** 2026-11-10 · **Current phase:** Phase 1 (Internal Operations) · **Stage:** Day 3 — first tool
+
+### Milestone 1 — headless paid-order core (PR #3)
+
+- Added private Supabase commerce tables and service-role-only `public.commerce_*` functions; server-priced orders and stock holds; Paystack TEST checkout, signed webhook and server-side verification; idempotent payment application, fulfilment tasks, transactional alert outbox, worker, owner test dashboard and payment return page. No AI or WhatsApp in this milestone.
+- **Review status (2026-11-10, implementation `cb296c9`): READY TO MERGE. PR #3 is ready to merge for Milestone 1 code review.** Confirmed remote `milestone-1` was exactly `00c7924` before applying option A; all six Task 05 SHA-256 values matched before commit and after push. Strict database-backed first-queue alternation, no redundant release/empty-queue probes, and oldest-due alert claiming resolve the remaining worker starvation. See `docs/commerce-review-05.md`; earlier reports are historical. No remaining blocking findings in this review.
+- **Verified locally on real PostgreSQL 16.15:** regression suite **9/9**, built-in suite **25/25**, zero stores/orders after rollback, and existing stock/lease/privilege/concurrency checks pass. New planner checks **3/3**: idle/single-queue plans, six genuinely overlapping planner calls yield exactly **3 alerts-first / 3 payments-first**, and an older-due higher-ID job wins over a newer lower-ID job. Old `00c7924` schema with one test order → reset → reinstall → **25/25**, zero stores/orders.
+- **JS/build verification:** worker suite **7/7**, prior liveness/webhook suite **5/5** (**12/12 total**). Former empty-alert and processed-alert starvation tests now check all three references at 6s RPC latency. Busy-shop fairness passes 18 latency/provider combinations × eight runs, with both queues served in every two-run window; all three recurring references are checked. The 34-case duration sweep peaks at **43.5s virtual time**; hanging providers **31s**, prior slow-DB case **29s**. `next build` passes, including types and 13 static pages. Six supplied files remain byte-identical, no dependencies were added, and generated `tsconfig.json` changes were restored.
+- **Still UNVERIFIED / exit checks:** real Supabase/PostgREST, pg_cron/Vault/pg_net setup; real Paystack TEST initialize → checkout → verify/webhook round-trip and ZAR support; hosted Vercel `after()`. Database cleanup still runs through `004_schedules.sql` Part A; the worker no longer calls it, and clock-based hold eligibility remains tested. Sanele must run the documented account-level exit checks. Broader reported stress runs were not independently rerun. The existing missing lockfile and documented Next.js advisory remain separate reproducibility/go-live concerns. Code-review readiness is not production verification.
 
 ### ✅ Done, committed & verified in production
 - `AGENTS.md` — this engineering context brief

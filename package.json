@@ -12,6 +12,7 @@
     "@google/genai": "^1.0.0",
     "@langchain/core": "^1.2.9",
     "@langchain/google": "^0.2.4",
+    "@supabase/supabase-js": "^2.57.0",
     "next-auth": "beta",
     "zod": "^4.5.4",
     "next": "15.3.6",
