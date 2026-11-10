@@ -1,5 +1,7 @@
 # Milestone 1 Task 04 verification — 9 November 2026
 
+Historical review, superseded by [review 05](commerce-review-05.md).
+
 **Verdict: merge after fixes. PR #3 is not ready to merge.** The duration fix passes; a reconciliation liveness regression remains.
 
 Applied option A from the uploaded `milestone-1-review03-files (1).zip` at `24b71a2`, overwriting exactly the six named paths. All six SHA-256 checksums matched Task 04 before committing and again after pushing. Implementation commit **`cc4aed530cef5e585910483bf060950bdac251fd`** has the requested message:
