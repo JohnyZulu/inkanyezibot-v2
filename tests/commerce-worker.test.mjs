@@ -9,15 +9,18 @@ import test from 'node:test';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-async function sandbox({ attempts = 20, alertCount = 10, rpcDelayMs = 0, verifySucceeds = false } = {}) {
+async function sandbox({ attempts = 20, alertCount = 10, rpcDelayMs = 0, verifySucceeds = false,
+                         refillAlerts = false, recurringAttempts = false } = {}) {
   let clock = 0;
   const calls = [];
-  const references = Array.from({ length: attempts }, (_, i) => ({ reference: `REVIEW-${i}` }));
+  // lastChecked: when the reconciler last claimed it (null = never). createdAt 0 = eligible from the start.
+  const references = Array.from({ length: attempts }, (_, i) => ({ reference: `REVIEW-${i}`, lastChecked: null }));
   const jobs = Array.from({ length: alertCount }, (_, i) => ({
-    id: i + 1, kind: 'notify_owner_paid_order', payload: {}, status: 'pending',
+    id: i + 1, kind: 'notify_owner_paid_order', payload: {}, status: 'pending', dueAt: 0,
   }));
   const claims = [];
   const released = [];
+  let lastFirst = null;   // commerce.worker_state
   const context = vm.createContext({
     Buffer, AbortController,
     console: { log() {}, warn() {}, error() {} },
@@ -52,17 +55,35 @@ async function sandbox({ attempts = 20, alertCount = 10, rpcDelayMs = 0, verifyS
     calls.push({ name, args });
     if (name === 'commerce_apply_verified_payment') return { outcome: 'applied' };
     if (name === 'commerce_release_expired_reservations') return 0;
+    if (name === 'commerce_worker_plan') {
+      // Mirrors the SQL: which queues have due work; strict alternation when both do.
+      const alerts_due = jobs.some(j => j.status === 'pending');
+      const payments_due = references.length > 0;
+      let first = null;
+      if (alerts_due && payments_due) first = lastFirst = lastFirst === 'alerts' ? 'payments' : 'alerts';
+      else if (alerts_due) first = 'alerts';
+      else if (payments_due) first = 'payments';
+      return { alerts_due, payments_due, first };
+    }
     if (name === 'commerce_claim_reconcile_attempt') {
-      const next = references.shift();
+      // Least-recently-checked first (never-checked first), like the SQL.
+      const next = recurringAttempts
+        ? [...references].sort((a, b) => (a.lastChecked ?? -1) - (b.lastChecked ?? -1))[0]
+        : references.shift();
       if (!next) return [];
+      next.lastChecked = clock;
       const claim = { reference: next.reference, claim_token: `token-${claims.length}` };
       claims.push(claim);
       return [claim];
     }
     if (name === 'commerce_release_reconcile_claim') { released.push(args); return true; }
     if (name === 'commerce_claim_jobs') {
-      const claimed = jobs.filter(j => j.status === 'pending').slice(0, args.p_limit);
+      const claimed = jobs.filter(j => j.status === 'pending')
+        .sort((a, b) => a.dueAt - b.dueAt || a.id - b.id).slice(0, args.p_limit);   // oldest due first, like the SQL
       claimed.forEach(j => { j.status = 'running'; });
+      // refillAlerts: a busy shop — a new alert becomes due every time one is claimed.
+      if (refillAlerts) claimed.forEach(() => jobs.push({ id: jobs.length + 1, kind: 'notify_owner_paid_order',
+                                                        payload: {}, status: 'pending', dueAt: clock }));
       return claimed;
     }
     if (name === 'commerce_complete_job') {
@@ -110,7 +131,7 @@ async function sandbox({ attempts = 20, alertCount = 10, rpcDelayMs = 0, verifyS
       await mod.evaluate();
       return mod.namespace;
     },
-    calls, jobs, claims, released, get elapsed() { return clock; },
+    calls, jobs, claims, released, references, get elapsed() { return clock; },
   };
 }
 
@@ -188,4 +209,35 @@ test('worker stays inside maxDuration for every DB latency up to the 8s timeout,
   }
   const max = worst.reduce((a, b) => (b.elapsed > a.elapsed ? b : a));
   console.log('slowest combination:', max);
+});
+
+test('busy shop + slow DB: alerts and payment checks both progress every two runs, never starve', async () => {
+  for (let rpcDelayMs = 0; rpcDelayMs <= 8000; rpcDelayMs += 1000) {
+    for (const verifySucceeds of [false, true]) {
+      // Alerts keep arriving and 3 unpaid attempts stay pending forever: both queues are never empty.
+      const s = await sandbox({ attempts: 3, alertCount: 3, rpcDelayMs, verifySucceeds,
+                                refillAlerts: true, recurringAttempts: true });
+      const cron = await s.run('cron');
+      const label = `rpc=${rpcDelayMs}ms verify=${verifySucceeds ? 'ok' : 'timeout'}`;
+      const perRun = [];
+      for (let run = 0; run < 8; run++) {
+        const start = s.elapsed, claimsBefore = s.claims.length;
+        const alertsBefore = s.jobs.filter(j => j.status !== 'pending').length;
+        const response = await cron.GET({ headers: new Headers({ authorization: 'Bearer test-cron' }) });
+        assert.equal(response.body.ok, true, label);
+        assert.ok(s.elapsed - start < cron.maxDuration * 1000, `${label} run ${run}: ${s.elapsed - start}ms`);
+        perRun.push({ payments: s.claims.length - claimsBefore,
+                      alerts: s.jobs.filter(j => j.status !== 'pending').length - alertsBefore });
+        s.jobs.filter(j => j.status === 'backoff').forEach(j => { j.status = 'pending'; j.dueAt = s.elapsed; }); // backoff ends
+      }
+      // Starvation check: in every window of two consecutive runs, each queue got at least one unit.
+      for (let i = 0; i + 1 < perRun.length; i++) {
+        assert.ok(perRun[i].payments + perRun[i + 1].payments > 0, `${label}: payments starved in runs ${i}-${i + 1}`);
+        assert.ok(perRun[i].alerts + perRun[i + 1].alerts > 0, `${label}: alerts starved in runs ${i}-${i + 1}`);
+      }
+      // Fair rotation across the 3 recurring attempts: every one gets checked.
+      assert.equal(s.references.filter(r => r.lastChecked !== null).length, 3, `${label}: an attempt was never checked`);
+      assert.deepEqual(s.released.map(r => r.p_claim_token), s.claims.map(c => c.claim_token), `${label}: claim not released`);
+    }
+  }
 });

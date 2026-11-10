@@ -133,7 +133,7 @@ class CommerceReview(unittest.TestCase):
         rows = [json.loads(row) for row in sql('select row_to_json(t) from commerce.run_core_tests() t;').splitlines()]
         for row in rows:
             print(row['test'], row['passed'], flush=True)
-        self.assertEqual(len(rows), 24)
+        self.assertEqual(len(rows), 25)
         self.assertTrue(all(row['passed'] is True for row in rows))
         self.assertEqual(sql('select count(*) from commerce.stores; select count(*) from commerce.orders;'), '0\n0')
         self.assertEqual(sql("select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace, "

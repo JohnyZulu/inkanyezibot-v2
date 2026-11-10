@@ -38,7 +38,7 @@ Supabase → **SQL Editor** → **New query** for each file. Paste the whole fil
 |---|---|---|
 | 1 | `supabase/001_commerce_core.sql` | "Success. No rows returned" |
 | 2 | `supabase/002_commerce_tests.sql` | "Success" |
-| 3 | run: `select * from commerce.run_core_tests();` | **24 rows, every `passed` = true** (no rows named CRASH) |
+| 3 | run: `select * from commerce.run_core_tests();` | **25 rows, every `passed` = true** (no rows named CRASH) |
 | 4 | `supabase/003_seed_test_store.sql` | 3 test products listed |
 | 5 | `supabase/004_schedules.sql` (PART A only, as shipped) | `commerce-release-expired-holds` listed, active = true |
 
@@ -150,6 +150,13 @@ When 1–10 pass, Milestone 1 (Phases 1 + the thin slice of 2 from v0.3) is done
 - Codex's slow-DB case (every DB call 7s, successful 14.9s verify) now finishes in **29s** (was 64.9s). A sweep of every DB latency from 0–8s × verify success/timeout (34 combinations) stays ≤ **43.5s**, leaves no job running or claim unreleased, and always makes progress.
 - The webhook now sends its inline owner alert with Next.js `after()` (after Paystack gets its 200), bounded the same way.
 - Suites: `tests/commerce-postgres-review.py` **9/9**, `tests/commerce-worker.test.mjs` **6/6**.
+
+**Codex review 04 fix (9 Nov 2026) — neither worker queue can starve the other:**
+- New `commerce_worker_plan()` (one DB call) says which queues have due work. When both do, the database **alternates strictly** between runs (`commerce.worker_state`), so each queue gets the guaranteed first turn at least every other run. The first queue continues only while leaving room for one whole unit of the other; empty queues are skipped with no probes.
+- The worker no longer releases lapsed holds itself — the database does it every minute (004 Part A) and availability already ignores them — saving a DB call per run.
+- Owner alerts are now claimed **oldest-due first** (a retried alert can't jump ahead of one that has waited longer).
+- Codex's two starvation tests pass; new test: busy shop (alerts keep arriving, unpaid attempts stay pending) × DB latency 0–8s × verify ok/timeout × 8 runs — every 2-run window gives both queues ≥ 1 unit, every attempt gets checked, every run < 60s.
+- Built-in SQL suite now **25 tests** (T25: plan + turn-taking). On real PG: 6 overlapping plan calls alternate exactly 3/3.
 
 **Not yet verified (needs your accounts):**
 - Real Supabase project (Supabase-specific roles, pg_cron, Vault, pg_net).

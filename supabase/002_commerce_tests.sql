@@ -264,6 +264,26 @@ begin
                           and action = 'late_payment_restocked'),
       'd', r2::text);
 
+    -- T25 worker plan: idle → nothing; one queue due → that one; both due → strict turn-taking
+    update commerce.jobs set status = 'done' where store_id = v_store;
+    update commerce.payment_attempts set status = 'cancelled' where store_id = v_store and status in ('pending','unknown');
+    r := public.commerce_worker_plan();
+    perform commerce.enqueue_job(v_store, 'notify_owner_paid_order', 'plan-test', '{}');
+    r2 := public.commerce_create_order('zz-test-suite', '{"email":"plan@example.com"}', '[{"sku":"T-WATCH","qty":1}]', '{"method":"collect"}');
+    insert into commerce.payment_attempts (store_id, order_id, attempt_no, reference, amount_cents, currency, created_at)
+      values (v_store, (r2->>'order_id')::uuid, 1, 'PLAN-1', 125000, 'ZAR', now() - interval '13 minutes');
+    v_txt := (public.commerce_worker_plan())->>'first';
+    v_ref := (public.commerce_worker_plan())->>'first';
+    v_num := (public.commerce_worker_plan())->>'first';
+    v_results := v_results || jsonb_build_object('t','T25 worker plan: idle → none; both queues due → strict turn-taking',
+      'ok', (  -- idle check only meaningful if no other store has due work (e.g. your real test store)
+              ((r->>'alerts_due')::bool = false and (r->>'payments_due')::bool = false and r->>'first' is null)
+              or exists (select 1 from commerce.jobs where store_id is distinct from v_store and status in ('pending','running'))
+              or exists (select 1 from commerce.payment_attempts where store_id <> v_store and status in ('pending','unknown')))
+            and v_txt in ('alerts','payments') and v_ref in ('alerts','payments')
+            and v_txt <> v_ref and v_num = v_txt,
+      'd', r::text || ' then firsts: ' || coalesce(v_txt,'∅') || ', ' || coalesce(v_ref,'∅') || ', ' || coalesce(v_num,'∅'));
+
     raise exception 'ROLLBACK_TEST_DATA';
   exception
     when raise_exception then

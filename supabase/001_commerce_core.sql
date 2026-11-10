@@ -735,6 +735,48 @@ begin
   return query select a.reference, v_token from payment_attempts a where a.id = v_id;
 end $$;
 
+-- Worker scheduling (Codex review 04): which queue goes first this run?
+--   • Nothing due anywhere → both false (the worker does nothing).
+--   • Only one queue has due work → that one.
+--   • Both have due work → STRICT TURN-TAKING: whichever went first last time goes second now
+--     (state kept in commerce.worker_state). So under any DB latency or alert backlog, each queue
+--     gets the guaranteed first turn at least every other run — neither can starve the other.
+create table commerce.worker_state (
+  id          int primary key default 1 check (id = 1),
+  last_first  text check (last_first in ('alerts','payments')),
+  updated_at  timestamptz not null default now()
+);
+insert into commerce.worker_state (id) values (1);
+
+create function public.commerce_worker_plan()
+returns jsonb
+language plpgsql volatile security definer set search_path = commerce, pg_temp as $$
+declare
+  v_alerts   boolean;
+  v_payments boolean;
+  v_first    text;
+begin
+  v_alerts := exists (select 1 from jobs j
+                       where (j.status = 'pending' and j.run_after <= clock_timestamp())
+                          or (j.status = 'running' and j.locked_at < clock_timestamp() - interval '10 minutes'));
+  v_payments := exists (select 1 from payment_attempts a
+                         where a.status in ('pending','unknown')
+                           and a.created_at < now() - interval '3 minutes'
+                           and a.created_at > now() - interval '48 hours'
+                           and (a.reconcile_lease_until is null or a.reconcile_lease_until <= clock_timestamp()));
+  if v_alerts and v_payments then
+    update worker_state
+       set last_first = case when last_first = 'alerts' then 'payments' else 'alerts' end, updated_at = now()
+     where id = 1
+    returning last_first into v_first;          -- atomic flip: overlapping runs also alternate
+  elsif v_alerts then
+    v_first := 'alerts';
+  elsif v_payments then
+    v_first := 'payments';
+  end if;
+  return jsonb_build_object('alerts_due', v_alerts, 'payments_due', v_payments, 'first', v_first);
+end $$;
+
 -- Finish a claim. Only the holder of the token can release it (a stale worker whose lease
 -- expired and was re-claimed by someone else gets false and changes nothing).
 create function public.commerce_release_reconcile_claim(p_reference text, p_claim_token uuid)
@@ -754,9 +796,10 @@ language sql security definer set search_path = commerce, pg_temp as $$
   update jobs j set status = 'running', attempts = j.attempts + 1, locked_at = now(), updated_at = now()
    where j.id in (
      select x.id from jobs x
-      where (x.status = 'pending' and x.run_after <= now())
-         or (x.status = 'running' and x.locked_at < now() - interval '10 minutes')
-      order by x.id limit least(p_limit, 25)
+      where (x.status = 'pending' and x.run_after <= clock_timestamp())
+         or (x.status = 'running' and x.locked_at < clock_timestamp() - interval '10 minutes')
+      order by coalesce(case when x.status = 'running' then x.locked_at end, x.run_after), x.id   -- oldest due first
+      limit least(p_limit, 25)
       for update skip locked)
   returning j.id, j.kind, j.payload, j.attempts;
 $$;
