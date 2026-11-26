@@ -19,6 +19,13 @@
 - **Verified on real accounts (18 Nov 2026):** the Supabase built-in suite passed **25/25**. Test order `INK-001015` was paid through Paystack TEST checkout, and the webhook logged `charge.success … applied`. The order was packed and handed to the courier. A repeat handoff was refused with `invalid_transition`. The Supabase `pg_cron` worker is returning HTTP 200 every five minutes.
 - **Still unverified:** hosted Vercel `after()` and the broader reported stress runs. Database cleanup runs through `004_schedules.sql` Part A, and clock-based hold eligibility remains tested. The missing lockfile and documented Next.js advisory remain separate reproducibility and go-live concerns.
 
+### Milestone 2 — WhatsApp customer agent (in progress)
+
+- **Plan:** `docs/milestone-2-plan.md` (v2 — owner decisions + Codex Task 06 findings resolved).
+- **Step 2a (branch `milestone-2-step-2a`, awaiting Codex review):** `supabase/005_whatsapp_agent.sql` (identities with immutable `owner_ref`, conversations, inbound/turn leases, carts, quotes, checkout intents, order owners, outbox, model budget, retention job) + `supabase/006_whatsapp_tests.sql` + `tests/whatsapp-postgres-2a.py`. Replaces one M1 function (`commerce_start_payment_attempt`, adds `managed_by_whatsapp` guard only).
+- **Verified locally on real PostgreSQL 16.15 (Claude):** in-DB suite **32/32**, race suite **8/8** (14 clean reruns), M1 built-in **25/25** and M1 regression **9/9** + planner **3/3** with 005 installed, reset → reinstall cycle, install over existing M1 data. 12-mutation sweep: every mutation caught. **Not yet run on Supabase.** No app (JS) code in 2a; provider calls and dispatch are 2b+.
+- **Rule for 2b+:** WhatsApp work never runs inside the M1 commerce worker; every write in a turn passes `(turn_id, lease_token)`; checkout links, order status and paid confirmations are rendered by the database, never by the model.
+
 ### ✅ Done, committed & verified in production
 - `AGENTS.md` — this engineering context brief
 - `lib/agent/brain.js` — Gemini reasoning core: model config, Inkanyezi system prompt (with security rules), `runAgentTask()`
