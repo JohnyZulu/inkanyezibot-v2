@@ -375,18 +375,21 @@ begin
       'ok', (r->>'dropped_replies')::int = 1 and (select count(*) from commerce.wa_outbox where turn_id = tid) = 0,
       'd', r::text);
 
-    -- ── W24 crashed turn: its model reservation counts as spent ──────────────
+    -- ── W24 crashed turn: all of its reservations count as spent ─────────────
     perform public.commerce_wa_owner_set_mode(v_conv, 'bot_active', 'owner:test');
     update commerce.wa_settings set daily_model_cap_micro_usd = 10000000 where store_id = v_store;
     update commerce.wa_model_budget set cap_micro_usd = 10000000 where store_id = v_store;
     perform commerce.wa_t_msg('27820000006', 'wamid.crash', 'hi again');
     t := commerce.wa_t_turn(v_conv); tid := (t->>'turn_id')::uuid; tok := (t->>'lease_token')::uuid;
     perform public.commerce_wa_reserve_model_spend(tid, tok, 300000);
+    perform public.commerce_wa_reserve_model_spend(tid, tok, 400000);
     update commerce.wa_conversations set turn_lease_until = clock_timestamp() - interval '1 second' where id = v_conv;
     t2 := commerce.wa_t_turn(v_conv);
-    v_results := v_results || jsonb_build_object('t','W24 abandoned turn''s reservation is counted as spent (cap stays honest)',
-      'ok', (t2->>'claimed')::bool and (select spent_micro_usd from commerce.wa_model_budget where store_id = v_store) = 1300000
-            and (select reserved_micro_usd from commerce.wa_model_budget where store_id = v_store) = 900000,
+    v_results := v_results || jsonb_build_object('t','W24 all of an abandoned turn''s reservations are counted as spent',
+      'ok', (t2->>'claimed')::bool and (select spent_micro_usd from commerce.wa_model_budget where store_id = v_store) = 1700000
+            and (select reserved_micro_usd from commerce.wa_model_budget where store_id = v_store) = 900000
+            and (select count(*) from commerce.wa_model_reservations
+                   where turn_id = tid and status = 'settled' and actual_micro_usd = amount_micro_usd) = 2,
       'd', t2::text);
     perform public.commerce_wa_complete_turn((t2->>'turn_id')::uuid, (t2->>'lease_token')::uuid, '[]', 'no_reply');
 
@@ -483,6 +486,28 @@ begin
        and (not exists (select 1 from pg_roles where rolname = 'service_role') or has_function_privilege('service_role', p.oid, 'execute'));
     v_results := v_results || jsonb_build_object('t','W31 every commerce_wa_* function: no public/anon execute, service_role yes',
       'ok', v_n > 20 and v_n = v_n2, 'd', v_n2 || '/' || v_n);
+
+    -- ── W33 a rejected later reply must not queue the earlier valid reply ────
+    perform commerce.wa_t_msg('27820000009', 'wamid.w33', 'where is my link?');
+    v_conv := (A->>'conv')::uuid;
+    t := commerce.wa_t_turn(v_conv); tid := (t->>'turn_id')::uuid; tok := (t->>'lease_token')::uuid;
+    r := public.commerce_wa_complete_turn(tid, tok, jsonb_build_array(
+      jsonb_build_object('purpose','reply','text','Here is your link'),
+      jsonb_build_object('purpose','checkout_link','intent_id',A->>'intent_id')));
+    v_ok := r->>'code' = 'checkout_not_open'
+            and not exists (select 1 from commerce.wa_outbox where turn_id = tid)
+            and (select answered_at is null from commerce.wa_inbound where wa_message_id = 'wamid.w33')
+            and (select status from commerce.wa_turns where id = tid) = 'running'
+            and (select current_turn_id = tid and turn_lease_token = tok from commerce.wa_conversations where id = v_conv);
+    r2 := public.commerce_wa_complete_turn(tid, tok,
+      '[{"purpose":"reply","text":"That link expired"},{"purpose":"reply","text":"I can help you make a new one"}]');
+    r3 := public.commerce_wa_complete_turn(tid, tok, '[{"purpose":"reply","text":"retry"}]');
+    v_results := v_results || jsonb_build_object('t','W33 invalid later reply queues nothing; corrected batch commits once in order',
+      'ok', v_ok and (r2->>'ok')::bool and (r3->>'replayed')::bool
+            and (select array_agg(payload->>'text' order by id) from commerce.wa_outbox where turn_id = tid)
+              = array['That link expired','I can help you make a new one']
+            and (select answered_turn_id from commerce.wa_inbound where wa_message_id = 'wamid.w33') = tid,
+      'd', r::text || ' | ' || r2::text || ' | ' || r3::text);
 
     raise exception 'ROLLBACK_TEST_DATA';
   exception
