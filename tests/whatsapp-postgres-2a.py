@@ -318,10 +318,14 @@ class Races(unittest.TestCase):
             turns.append((t['turn_id'], t['lease_token']))
         sessions = [Session(f'r5_{i}') for i in range(6)]
         try:
+            # Session 0 must reach the budget row FIRST (and hold it); only then start the others.
+            # Sending all six before reading session 0 let another session win the row lock
+            # occasionally, leaving session 0 blocked behind an open transaction (harness hang).
             for i, (tid, tok) in enumerate(turns):
                 sessions[i].send('begin;'); sessions[i].result()
                 sessions[i].send(f"select public.commerce_wa_reserve_model_spend('{tid}','{tok}',900000);")
-            first = json.loads(sessions[0].result())
+                if i == 0:
+                    first = json.loads(sessions[0].result())
             for i in range(1, 6):
                 self.assertTrue(wait_blocked(f'r5_{i}'), 'all reservations must contend on the budget row')
             sessions[0].send('commit;'); sessions[0].result()
