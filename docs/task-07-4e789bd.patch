@@ -1,0 +1,365 @@
+diff --git a/docs/commerce-review-07.md b/docs/commerce-review-07.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..1c47e385e171f81db940c4d52e4b66afcf900f03
+--- /dev/null
++++ b/docs/commerce-review-07.md
+@@ -0,0 +1,141 @@
++# Milestone 2 step 2a Task 07 review — 27 November 2026
++
++**Verdict: ready to apply.** The two findings from the Codex review of PR #5 and a related budget-accounting defect are fixed in the attached patch. The patched files passed the step 2a and Milestone 1 suites on PostgreSQL 16.15.
++
++## Branch, bytes and implementation
++
++The checked-out base and the remote `milestone-2` tip both resolved to **`4e789bd5d74d1bf52583a201f280a2f76ab70ee7`**, the squash merge of PR #5. The prior Codex follow-up described commit `560be86`. It was unavailable in the local checkout and GitHub, so this bundle reconstructs the fixes from the two original review findings. The test results below come from fresh runs. The bundle was prepared locally without publishing a branch or updating the PR. [Merged PR #5](https://github.com/JohnyZulu/inkanyezibot-v2/pull/5) · [Prior follow-up](https://github.com/JohnyZulu/inkanyezibot-v2/pull/5#issuecomment-7205260488)
++
++The patch and ZIP contain the complete review changes in `supabase/005_whatsapp_agent.sql`, `supabase/006_whatsapp_tests.sql`, `tests/whatsapp-postgres-2a.py`, `docs/milestone-2-plan.md` and this report. The standalone report is byte-identical to the copy under `docs/` in the ZIP. The downloadable `task-07-sha256.txt` lists every changed file, the ZIP and the patch.
++
++## Findings and fixes
++
++### P1 — Partial reply batch survived a failed completion
++
++`commerce_wa_complete_turn` inserted each reply during validation. If a text reply came before a checkout link whose intent had closed, the function returned `checkout_not_open` normally and committed the earlier outbox row. The inbound stayed unanswered and the turn stayed running. Dispatch could send the stray reply, and recovery could answer the inbound again. [Original PR finding](https://github.com/JohnyZulu/inkanyezibot-v2/pull/5#discussion_r4714006923)
++
++The function now validates and stages the whole batch, preserving each eligible reply's original position and deduplication key. It writes outbox rows only after the last reply passes validation, in the same transaction that answers the claimed inbound and releases the lease. **W33** failed on the merged SQL and passed on the revised SQL. It checks that rejecting a later reply leaves zero outbox rows, retains the lease and leaves the inbound unanswered. It then checks a corrected two-reply batch and confirms that replaying the committed turn adds no rows.
++
++### P2 — Expired-turn recovery and late model settlement could deadlock
++
++`commerce_wa_settle_model_spend` locked the reservation before updating the store/day budget. Expired-turn recovery acquired the budget lock before updating the reservation. A late settlement and a reclaim could each hold the row the other needed. [Original PR finding](https://github.com/JohnyZulu/inkanyezibot-v2/pull/5#discussion_r4714006936)
++
++Recovery now locks every still-reserved row for the expired turn before touching any budget row. After waiting for a concurrent settlement, it counts only reservations that are still outstanding. **R9** holds the last reservation in that lock order, confirms the recovery session is waiting on PostgreSQL, and then settles the held reservation. PostgreSQL reported a deadlock on the merged SQL. On the revised SQL both sessions committed, the replacement turn reclaimed the original inbound, and a retry of settlement on a recovered reservation returned `replayed`.
++
++### P2 — Recovery miscounted multiple reservations for the same day
++
++The original recovery used `UPDATE … FROM` with one matching row per reservation. PostgreSQL updates a target budget row once even when several reservations match it. Recovery could mark all the reservations settled while moving only one amount from reserved to spent.
++
++Recovery now sums the locked, outstanding amounts by store and budget day. It moves each total from reserved to spent before marking those reservations settled. **W24** now leaves two reservations on the same turn and checks both counters and both settlement records. **R9** also checks the exact combined spend after concurrent settlement, with the measured cost for the call that finished first and the reserved cost for the calls recovered after expiry.
++
++## Tests rerun
++
++| Check | Observed result |
++|---|---|
++| PostgreSQL engine | **16.15** (Debian package `16.15-1.pgdg12+2`) |
++| WhatsApp built-in suite | **33/33 passed** with the revised `005` and `006`. After rollback there were zero test stores, orders and outbox rows in the unseeded scratch database. |
++| WhatsApp race suite | **9/9 passed** with separate PostgreSQL connections. The original 8 races passed on the merged base. The new R9 failed on that base and passed five additional isolated runs on the revised SQL. |
++| Milestone 1 built-in suite | **25/25 passed** with the revised `005` installed. |
++| Milestone 1 PostgreSQL regression suite | **9/9 passed** with the revised `005` installed, including privilege, stock, reconciliation and lease checks. |
++| Milestone 1 planner suite | **3/3 passed** with the revised `005` installed. Six overlapping planner calls returned three alerts-first and three payments-first. |
++| Milestone 1 worker and webhook JavaScript suites | **12/12 passed** (7 worker + 5 review-04), using the existing fake RPC/provider harness. The timing sweep peaked at 43,500 ms of virtual time. |
++| In-place update of the two functions | Passed on a scratch database with the base `005` already installed. An existing Milestone 1 order and a WhatsApp inbound row were preserved. Both SQL suites passed after the update (33/33 and 25/25). |
++
++Commands for the revised files, using a disposable PostgreSQL 16 container named `task07-pg16`:
++
++```sh
++python3 tests/whatsapp-postgres-2a.py --container task07-pg16
++node --experimental-vm-modules --test tests/commerce-worker.test.mjs tests/commerce-review04.test.mjs
++```
++
++The WhatsApp race harness also runs both SQL suites. The Milestone 1 PostgreSQL regression and planner suites used temporary copies of `tests/commerce-postgres-review.py` and `tests/commerce-worker-plan-review.py` with their setup extended to load the revised `005`. Their assertions ran as written in the repository.
++
++## Application and verification scope
++
++Apply the patch from a clean checkout of the base with `git apply --check task-07-4e789bd.patch` followed by `git apply task-07-4e789bd.patch`. The ZIP is the alternative if you prefer replacing complete files at their repository-relative locations.
++
++For a fresh step 2a install, use the revised `005` and `006`. If the database has already run the base `005`, apply just the revised definitions of `public.commerce_wa_claim_turn` and `public.commerce_wa_complete_turn` with `CREATE OR REPLACE FUNCTION` in one transaction, then load the revised `006`. This is the in-place path tested above. The full `005` is an install script. If the old recovery code has already affected a budget counter, review its historical reservations before adjusting that counter.
++
++**Outstanding verification:** Supabase SQL Editor and pg_cron, hosted dispatch, and Meta, Gemini and Paystack integrations. These results are from a disposable local database and the existing JavaScript harness.
++
++## WhatsApp race results
++
++| Test | Result |
++|---|---|
++| R1 Concurrent confirmation of one quote creates one order intent | Pass |
++| R2 Cancellation wins before payment arrives | Pass |
++| R3 Payment wins before replacement | Pass |
++| R4 Concurrent repeated late payment creates one owner exception | Pass |
++| R5 Six overlapping reservations obey the daily cap | Pass |
++| R6 Overlapping turn claims obey the concurrency cap | Pass |
++| R7 An expired lease cannot consume newer inbound | Pass |
++| R8 Checkout replacement can overlap a paid-confirmation insert | Pass |
++| R9 Late settlement and expired-turn recovery both commit with correct balances | Pass |
++
++## WhatsApp built-in SQL rows
++
++| Test | Result |
++|---|---|
++| W01 two senders sharing one receipt email see only their own orders | Pass |
++| W02 paid confirmation is queued once, for the owning conversation only | Pass |
++| W03 repeated payment event → no second paid confirmation | Pass |
++| W04 owner_ref / sender / order owner / intent owner are immutable | Pass |
++| W05 duplicate delivery stored once; late redelivery does not rewind the 24h window | Pass |
++| W06 turn commits reply + answered together; newer inbound left for next turn | Pass |
++| W07 retried commit of the same turn is a no-op (no duplicate reply) | Pass |
++| W08 expired lease cannot commit, write, or consume newer inbound; next claim takes over | Pass |
++| W09 quote needs a confirmed email; total is server-computed incl. courier | Pass |
++| W10 wrong total, changed cart, superseded quote are all refused | Pass |
++| W11 replayed "yes" returns the same checkout — never a second one | Pass |
++| W12 retry recovers the SAME reference; ambiguous result must be reconciled before a new one | Pass |
++| W13 checkout-link message is rendered from server records | Pass |
++| W14 a second open checkout for one conversation is impossible (unique index) | Pass |
++| W15 confirmed replacement cancels old checkout + releases holds in the same transaction | Pass |
++| W16 paid-after-cancel → funds recorded, 1 owner exception, 0 pack tasks, 0 paid messages | Pass |
++| W17 payment first → replacement refused (no cancel), stale yes cannot retry it | Pass |
++| W18 replacement refused (stock) → old link still open, holds intact, nothing half-done | Pass |
++| W19 paused: server turn; only confirm_quote / order_status / complete allowed | Pass |
++| W20 paid during takeover → one fixed confirmation + owner alert; still paused | Pass |
++| W21 owner resume → bot_active, handoff task resolved | Pass |
++| W22 budget reserved before calls; cap hit → paused, 1 task, 1 resting notice | Pass |
++| W23 owner takeover / pause mid-turn drops the AI reply | Pass |
++| W24 all of an abandoned turn's reservations are counted as spent | Pass |
++| W25 a message that fails 3 turns is closed as gave_up and handed to a person | Pass |
++| W26 outside 24h → window_closed + owner task; inside → claimed for send | Pass |
++| W27 send whose claim lapsed → uncertain; not reclaimed; late result refused | Pass |
++| W28 explicit requeue → sent; status callbacks only move forward | Pass |
++| W29 90-day purge removes text/payloads, keeps ids; replay still ignored | Pass |
++| W30 owner-page checkout refuses WhatsApp orders (managed_by_whatsapp) | Pass |
++| W31 every commerce_wa_* function: no public/anon execute, service_role yes | Pass |
++| W32 quote for a checkout that has since closed → checkout_changed (re-quote) | Pass |
++| W33 invalid later reply queues nothing; corrected batch commits once in order | Pass |
++
++## Milestone 1 built-in SQL rows
++
++| Test | Result |
++|---|---|
++| T01 server-side total = 2×1250 + 99 delivery | Pass |
++| T02 order number INK-###### and email lower-cased | Pass |
++| T03 same idempotency key → same order, no second hold | Pass |
++| T04 customer-confirmed total differs → total_changed | Pass |
++| T05 last unit: 2nd buyer gets insufficient_stock | Pass |
++| T06 bad email / qty>10 / unknown sku refused | Pass |
++| T07 attempt ref = order-1, double-click reuses it | Pass |
++| T08 underpayment → mismatch_held + owner task, order stays unpaid | Pass |
++| T09 verified payment → confirmed/ready_to_pack, allocated, task+job | Pass |
++| T10 same payment applied twice → duplicate, nothing doubled | Pass |
++| T11 late "failed" after success → no regression | Pass |
++| T12 unknown reference → urgent owner task | Pass |
++| T13 second real charge on paid order → duplicate_payment task | Pass |
++| T14 handed_to_courier: on_hand 3→1 once; available stays 1 | Pass |
++| T15 expired hold → stock available again, new checkout refused | Pass |
++| T16 late payment, unit still free → confirmed + allocated | Pass |
++| T17 late payment, stock gone → paid + on_hold + task, no oversell | Pass |
++| T18 unpriced courier → delivery_not_priced + support task | Pass |
++| T19 same provider event twice → stored once | Pass |
++| T20 failed job → back to pending with backoff, error kept | Pass |
++| T21 anon/authenticated cannot execute commerce_* functions | Pass |
++| T22 reconcile rotation: one-per-run worker checks all 3 before repeating | Pass |
++| T23 lease: in-flight attempt not re-claimable; wrong token refused; expiry frees it | Pass |
++| T24 expired hold is revalidated, not blindly allocated | Pass |
++| T25 worker plan: idle → none; both queues due → strict turn-taking | Pass |
+diff --git a/docs/milestone-2-plan.md b/docs/milestone-2-plan.md
+index ff8c564a135fede47f774a1c48b2a42b73c8a4cb..61dacdc0321213706a2fddbd74ea8e4b6c3ec823 100644
+--- a/docs/milestone-2-plan.md
++++ b/docs/milestone-2-plan.md
+@@ -118,6 +118,7 @@ After payment, the cart that produced the paid quote is closed if it hasn't chan
+ - **Dedup + schedule together:** `commerce_wa_record_inbound` stores the message and updates the conversation in one transaction; there is no separate job to lose. Replays/duplicates change nothing; a late redelivery never rewinds the 24h window, a future timestamp never extends it.
+ - **Explicit claims:** `commerce_wa_claim_turn` records the exact inbound ids it owns (≤ 20, oldest first) and a lease token. `complete_turn` marks **only those ids** answered — messages that arrive during the turn wait for the next one.
+ - **Fencing:** every tool function takes `(turn_id, lease_token)` and checks the token, the turn is current, and the lease hasn't expired (real clock). An expired turn can't write, reply or consume inbound; the next claim marks it `abandoned` and re-claims its messages. `complete_turn` retried after an ambiguous DB timeout is a no-op (`replayed`).
++- **Atomic reply batches:** `complete_turn` stages all eligible replies before queuing any of them. If any reply fails validation, the inbound messages stay unanswered and the worker can correct the batch or release the turn.
+ - **Bounded concurrency:** at most `p_max_concurrent` (default 3) live leases; claims are serialised by an advisory lock so the count is exact.
+ - **Poison messages:** after 3 failed turns a message is closed as `gave_up` and the conversation goes to a human.
+ - **Paused (`human_requested | human_active`) — enumerated server-handled actions.** Claims become `kind='server'` (model-free). Allowed: `confirm_quote` (customer taps the "Yes, pay R…" button of a quote shown before the pause → link sent from the fixed `checkout_link` template), `order_status` (own orders, fixed template), `complete`. Everything else (cart, quote, email, model reservation, free-form replies, request_human) returns `action_not_allowed`. Other inbound is stored, `owner_unread_since` set, no reply. If the owner takes over **mid-turn**, the AI's free-form reply is dropped at commit (`paused_discarded`).
+@@ -125,7 +126,7 @@ After payment, the cart that produced the paid quote is closed if it hasn't chan
+ - **Rendering from server records:** `complete_turn` builds `checkout_link` (URL, total, order number, hold expiry) and `order_status` payloads from the database; callers pass only an intent id / order numbers. Paid confirmation payload comes from the order row. Free-form `reply` text is the only model-written content and still goes through the grounding check (§8, 2c).
+ 
+ ## 7. Model budget  *(finding 5)*
+-`commerce_wa_reserve_model_spend(turn, lease, estimate)` **before** every model call: a single `UPDATE … WHERE reserved + spent + estimate <= cap` on the store/day row, so concurrent turns can never jointly exceed the cap (race test R5: 6 concurrent × US$0.90 against US$2.00 → exactly 2 succeed). `settle` records the actual cost (an overrun is recorded, not hidden). A turn that dies holding a reservation has it **counted as spent** when its lease is taken over. On exhaustion: conversation → `human_requested` (reason `budget`), one owner task per day, one scripted "resting" notice per conversation per day. Units: micro-USD. Day: local date in `Africa/Johannesburg`.
++`commerce_wa_reserve_model_spend(turn, lease, estimate)` **before** every model call: a single `UPDATE … WHERE reserved + spent + estimate <= cap` on the store/day row, so concurrent reservations stay within the cap (race test R5: 6 concurrent × US$0.90 against US$2.00 → exactly 2 succeed). Settlement records the actual cost, including overruns. Recovery of an expired turn locks all outstanding reservations before updating the budgets, then counts their full amounts as spent per store and day. A settlement that finishes first keeps its actual cost. On exhaustion: conversation → `human_requested` (reason `budget`), one owner task per day, one scripted "resting" notice per conversation per day. Units: micro-USD. Day: local date in `Africa/Johannesburg`.
+ 
+ ## 8. Guardrails (agent, 2c)
+ - Bounded loop: `MAX_STEPS` 6; per-model-call timeout; whole-turn budget (§10). On limit → polite fallback + owner task; never a half-made checkout (the DB makes that impossible anyway).
+@@ -174,8 +175,8 @@ Not bound (owner-only, enforced by tests): mark packed/couriered/completed, `com
+ 
+ ## 14. Tests
+ **2a (this step) — merge gates, all on real PostgreSQL 16:**
+-- In-DB suite `select * from commerce.run_whatsapp_tests();` — **32 tests** (`supabase/006_whatsapp_tests.sql`), rolled back. Includes: shared-email isolation (W01), paid notification to the owning conversation only (W02–03), immutability (W04), dedup/window (W05), explicit claims (W06–07), expired lease can't commit/write/consume newer inbound (W08), quote binding + replay (W09–11), retry/ambiguity → reconcile (W12), server-rendered link (W13), one-open index (W14), atomic replacement (W15), paid-after-cancel incl. repeated event: 1 exception, 0 fulfilment, 0 paid messages (W16), payment-first refusal (W17), failed replacement rolls back (W18), paused allow-list + paid during takeover (W19–21), budget (W22–24), poison (W25), 24 h window + uncertain sends (W26–28), retention (W29), M1 guard (W30), privileges (W31), closed-checkout quote (W32).
+-- Multi-connection races `tests/whatsapp-postgres-2a.py` — **8 tests**, each proves the second session really blocked: R1 concurrent "yes" → one intent; R2 cancellation first then payment; R3 payment first then replacement; R4 repeated late payment concurrently; R5 budget cap under 6-way concurrency; R6 claim concurrency cap; R7 lease expiry mid-transaction; R8 no deadlock between replacement and the paid-confirmation insert.
++- In-DB suite `select * from commerce.run_whatsapp_tests();` — **33 tests** (`supabase/006_whatsapp_tests.sql`), rolled back. Includes shared-email isolation (W01), paid notification to the owning conversation only (W02–03), immutability (W04), dedup/window (W05), explicit claims (W06–07), expired lease can't commit/write/consume newer inbound (W08), quote binding + replay (W09–11), retry/ambiguity → reconcile (W12), server-rendered link (W13), one-open index (W14), atomic replacement (W15), paid-after-cancel incl. repeated event: 1 exception, 0 fulfilment, 0 paid messages (W16), payment-first refusal (W17), failed replacement rolls back (W18), paused allow-list + paid during takeover (W19–21), budget and recovery of multiple reservations (W22–24), poison (W25), 24 h window + uncertain sends (W26–28), retention (W29), M1 guard (W30), privileges (W31), closed-checkout quote (W32), and rejected reply batch followed by a corrected retry (W33).
++- Race suite `tests/whatsapp-postgres-2a.py` — **9 tests**. R1 concurrent "yes" → one intent. R2 cancellation first, then payment. R3 payment first, then replacement. R4 repeated late payment concurrently. R5 budget cap under 6-way concurrency. R6 claim concurrency cap. R7 stale lease with newer inbound. R8 replacement overlapping the paid-confirmation insert. R9 late model-cost settlement overlapping recovery of an expired turn.
+ - Milestone 1 suite still **25/25** with 005 installed.
+ - Mutation check (Claude, not committed): 12 deliberate breakages of 005 — each is caught by at least one test (see the Codex brief).
+ 
+@@ -184,7 +185,7 @@ Not bound (owner-only, enforced by tests): mark packed/couriered/completed, `com
+ ## 15. Build order (each step = its own PR, Codex-reviewed)
+ | Step | PR | Exit |
+ |---|---|---|
+-| **2a** | `005` schema + functions + triggers, `006` in-DB tests, race tests | 32/32 + 8/8 + M1 25/25 on real PG16; Sanele runs 005/006 on Supabase → 32/32 |
++| **2a** | `005` schema + functions + triggers, `006` in-DB tests, race tests | 33/33 + 9/9 + M1 25/25 on real PG16. Sanele runs the updated SQL on Supabase → 33/33. |
+ | 2b | WhatsApp adapter: webhook (verify + `record_inbound` + 200), WhatsApp worker route + schedule, outbound sender + status callbacks, **echo bot** (server turn, no AI) | Sanele's phone ↔ test number round-trip; duplicates ignored |
+ | 2c | Customer tools + agent loop (scripted fake model), grounding check, budget reservations, time budget | deterministic + scripted tests green |
+ | 2d | Real Gemini + evals; Paystack initialize for intents; paid notification send | evals reviewed; real test payment from WhatsApp |
+diff --git a/supabase/005_whatsapp_agent.sql b/supabase/005_whatsapp_agent.sql
+index 28e021105201403b90fff51d5aa82a3df952302b..e58316b7d1262539d7b929907a754a52f991698d 100644
+--- a/supabase/005_whatsapp_agent.sql
++++ b/supabase/005_whatsapp_agent.sql
+@@ -547,10 +547,21 @@ begin
+   if v_conv.current_turn_id is not null then
+     update wa_turns set status = 'abandoned', finished_at = clock_timestamp(), outcome = 'lease_expired'
+      where id = v_conv.current_turn_id and status = 'running';
+-    update wa_model_budget b set reserved_micro_usd = b.reserved_micro_usd - r.amount_micro_usd,
+-                                 spent_micro_usd = b.spent_micro_usd + r.amount_micro_usd
+-      from wa_model_reservations r
+-     where r.turn_id = v_conv.current_turn_id and r.status = 'reserved' and b.store_id = r.store_id and b.day = r.day;
++
++    -- Late settlement locks the reservation before the budget. Lock every remaining
++    -- reservation before touching any budget row, including when a turn crosses midnight.
++    perform 1 from wa_model_reservations r
++     where r.turn_id = v_conv.current_turn_id and r.status = 'reserved'
++     order by r.id for update;
++    update wa_model_budget b set reserved_micro_usd = b.reserved_micro_usd - pending.total_micro_usd,
++                                 spent_micro_usd = b.spent_micro_usd + pending.total_micro_usd
++      from (
++        select store_id, day, sum(amount_micro_usd)::bigint as total_micro_usd
++          from wa_model_reservations
++         where turn_id = v_conv.current_turn_id and status = 'reserved'
++         group by store_id, day
++      ) pending
++     where b.store_id = pending.store_id and b.day = pending.day;
+     update wa_model_reservations set status = 'settled', actual_micro_usd = amount_micro_usd
+      where turn_id = v_conv.current_turn_id and status = 'reserved';
+   end if;
+@@ -612,7 +623,7 @@ language plpgsql security definer set search_path = commerce, pg_temp as $$
+ declare
+   v_err text; v_turn wa_turns; v_conv wa_conversations; v_ident wa_identities; r jsonb; v_n int := 0;
+   v_ids bigint[] := '{}'; v_id bigint; v_int wa_checkout_intents; v_payload jsonb; v_dropped int := 0;
+-  v_order orders; v_left int;
++  v_order orders; v_left int; v_staged jsonb[] := '{}';
+ begin
+   select * into v_turn from wa_turns where id = p_turn_id;
+   if found and v_turn.status = 'committed' and v_turn.lease_token = p_lease_token then
+@@ -655,7 +666,13 @@ begin
+     else
+       return jsonb_build_object('ok',false,'code','invalid_purpose');
+     end if;
+-    v_id := wa_queue_out(v_conv.id, p_turn_id, r->>'purpose', 'turn:' || p_turn_id || ':' || v_n, v_payload);
++    v_staged := array_append(v_staged, jsonb_build_object(
++      'purpose', r->>'purpose', 'dedup_key', 'turn:' || p_turn_id || ':' || v_n, 'payload', v_payload));
++  end loop;
++
++  -- Validation errors return normally. Queue only after the whole batch has passed.
++  foreach r in array v_staged loop
++    v_id := wa_queue_out(v_conv.id, p_turn_id, r->>'purpose', r->>'dedup_key', r->'payload');
+     if v_id is not null then v_ids := v_ids || v_id; end if;
+   end loop;
+ 
+diff --git a/supabase/006_whatsapp_tests.sql b/supabase/006_whatsapp_tests.sql
+index f9c4b1a31ee939c422cd24059d57636e7b79fb63..1e4ece55ffb0661eb2a0b14bd04667bea9b8be61 100644
+--- a/supabase/006_whatsapp_tests.sql
++++ b/supabase/006_whatsapp_tests.sql
+@@ -375,18 +375,21 @@ begin
+       'ok', (r->>'dropped_replies')::int = 1 and (select count(*) from commerce.wa_outbox where turn_id = tid) = 0,
+       'd', r::text);
+ 
+-    -- ── W24 crashed turn: its model reservation counts as spent ──────────────
++    -- ── W24 crashed turn: all of its reservations count as spent ─────────────
+     perform public.commerce_wa_owner_set_mode(v_conv, 'bot_active', 'owner:test');
+     update commerce.wa_settings set daily_model_cap_micro_usd = 10000000 where store_id = v_store;
+     update commerce.wa_model_budget set cap_micro_usd = 10000000 where store_id = v_store;
+     perform commerce.wa_t_msg('27820000006', 'wamid.crash', 'hi again');
+     t := commerce.wa_t_turn(v_conv); tid := (t->>'turn_id')::uuid; tok := (t->>'lease_token')::uuid;
+     perform public.commerce_wa_reserve_model_spend(tid, tok, 300000);
++    perform public.commerce_wa_reserve_model_spend(tid, tok, 400000);
+     update commerce.wa_conversations set turn_lease_until = clock_timestamp() - interval '1 second' where id = v_conv;
+     t2 := commerce.wa_t_turn(v_conv);
+-    v_results := v_results || jsonb_build_object('t','W24 abandoned turn''s reservation is counted as spent (cap stays honest)',
+-      'ok', (t2->>'claimed')::bool and (select spent_micro_usd from commerce.wa_model_budget where store_id = v_store) = 1300000
+-            and (select reserved_micro_usd from commerce.wa_model_budget where store_id = v_store) = 900000,
++    v_results := v_results || jsonb_build_object('t','W24 all of an abandoned turn''s reservations are counted as spent',
++      'ok', (t2->>'claimed')::bool and (select spent_micro_usd from commerce.wa_model_budget where store_id = v_store) = 1700000
++            and (select reserved_micro_usd from commerce.wa_model_budget where store_id = v_store) = 900000
++            and (select count(*) from commerce.wa_model_reservations
++                   where turn_id = tid and status = 'settled' and actual_micro_usd = amount_micro_usd) = 2,
+       'd', t2::text);
+     perform public.commerce_wa_complete_turn((t2->>'turn_id')::uuid, (t2->>'lease_token')::uuid, '[]', 'no_reply');
+ 
+@@ -484,6 +487,28 @@ begin
+     v_results := v_results || jsonb_build_object('t','W31 every commerce_wa_* function: no public/anon execute, service_role yes',
+       'ok', v_n > 20 and v_n = v_n2, 'd', v_n2 || '/' || v_n);
+ 
++    -- ── W33 a rejected later reply must not queue the earlier valid reply ────
++    perform commerce.wa_t_msg('27820000009', 'wamid.w33', 'where is my link?');
++    v_conv := (A->>'conv')::uuid;
++    t := commerce.wa_t_turn(v_conv); tid := (t->>'turn_id')::uuid; tok := (t->>'lease_token')::uuid;
++    r := public.commerce_wa_complete_turn(tid, tok, jsonb_build_array(
++      jsonb_build_object('purpose','reply','text','Here is your link'),
++      jsonb_build_object('purpose','checkout_link','intent_id',A->>'intent_id')));
++    v_ok := r->>'code' = 'checkout_not_open'
++            and not exists (select 1 from commerce.wa_outbox where turn_id = tid)
++            and (select answered_at is null from commerce.wa_inbound where wa_message_id = 'wamid.w33')
++            and (select status from commerce.wa_turns where id = tid) = 'running'
++            and (select current_turn_id = tid and turn_lease_token = tok from commerce.wa_conversations where id = v_conv);
++    r2 := public.commerce_wa_complete_turn(tid, tok,
++      '[{"purpose":"reply","text":"That link expired"},{"purpose":"reply","text":"I can help you make a new one"}]');
++    r3 := public.commerce_wa_complete_turn(tid, tok, '[{"purpose":"reply","text":"retry"}]');
++    v_results := v_results || jsonb_build_object('t','W33 invalid later reply queues nothing; corrected batch commits once in order',
++      'ok', v_ok and (r2->>'ok')::bool and (r3->>'replayed')::bool
++            and (select array_agg(payload->>'text' order by id) from commerce.wa_outbox where turn_id = tid)
++              = array['That link expired','I can help you make a new one']
++            and (select answered_turn_id from commerce.wa_inbound where wa_message_id = 'wamid.w33') = tid,
++      'd', r::text || ' | ' || r2::text || ' | ' || r3::text);
++
+     raise exception 'ROLLBACK_TEST_DATA';
+   exception
+     when raise_exception then
+diff --git a/tests/whatsapp-postgres-2a.py b/tests/whatsapp-postgres-2a.py
+index a1e20921711430dda6f8a4e5d2c7976753b7212e..c5c7e34050639bbc85fd6f74b3a5585cbc00b223 100644
+--- a/tests/whatsapp-postgres-2a.py
++++ b/tests/whatsapp-postgres-2a.py
+@@ -398,6 +398,59 @@ class Races(unittest.TestCase):
+         self.assertEqual(rb.get('code'), 'old_checkout_paid', rb)
+         self.assertEqual(count(f"commerce.wa_outbox where dedup_key = 'paid:{c['order_id']}'"), 1)
+ 
++    def test_r9_late_settlement_overlaps_turn_recovery(self):
++        sql("delete from commerce.wa_model_reservations; delete from commerce.wa_model_budget;")
++        s = sender()
++        conv = j(f"select commerce.wa_t_msg('{s}', 'wamid.r9.{s}', 'hi');")['conversation_id']
++        t = j(f"select commerce.wa_t_turn('{conv}');")
++        tid, tok = t['turn_id'], t['lease_token']
++        reservations = {}
++        for amount in (200000, 300000, 400000):
++            r = j(f"select public.commerce_wa_reserve_model_spend('{tid}', '{tok}', {amount});")
++            self.assertTrue(r['ok'], r)
++            reservations[r['reservation_id']] = amount
++        sql(f"update commerce.wa_conversations set turn_lease_until = clock_timestamp() - interval '1 second' "
++            f"where id = '{conv}';")
++
++        # Hold the last reservation in recovery's lock order. Recovery may lock the others
++        # first, but must leave the budget row free so settlement can finish.
++        last_id = max(reservations)
++        settler, recovery = Session('r9_settle'), Session('r9_recover')
++        try:
++            settler.send('begin;'); settler.result()
++            settler.send(f"select id from commerce.wa_model_reservations where id = '{last_id}' for update;")
++            self.assertEqual(settler.result(), last_id)
++            recovery.send('begin;'); recovery.result()
++            recovery.send(f"select commerce.wa_t_turn('{conv}');")
++            self.assertTrue(wait_blocked('r9_recover'), 'recovery must wait for the locked reservation')
++
++            settler.send(f"select public.commerce_wa_settle_model_spend('{last_id}', 50000);")
++            result = settler.result()
++            self.assertTrue(result.startswith('{'), result)
++            settled = json.loads(result)
++            settler.send('commit;'); settler.result()
++            result = recovery.result()
++            self.assertTrue(result.startswith('{'), result)
++            reclaimed = json.loads(result)
++            recovery.send('commit;'); recovery.result()
++        finally:
++            settler.close(); recovery.close()
++
++        self.assertTrue(settled['ok'] and not settled['replayed'], settled)
++        self.assertTrue(reclaimed['claimed'] and reclaimed['turn_id'] != tid, reclaimed)
++        self.assertEqual(reclaimed['message_ids'], t['message_ids'])
++        self.assertEqual(sql(f"select status from commerce.wa_turns where id = '{tid}';"), 'abandoned')
++        recovered_id = min(reservations)
++        replay = j(f"select public.commerce_wa_settle_model_spend('{recovered_id}', 10000);")
++        self.assertTrue(replay['ok'] and replay['replayed'], replay)
++        reservations[last_id] = 50000
++        self.assertEqual(j(f"select jsonb_object_agg(id, actual_micro_usd) "
++                           f"from commerce.wa_model_reservations where turn_id = '{tid}' and status = 'settled';"),
++                         reservations)
++        self.assertEqual(j("select jsonb_build_object('reserved', sum(reserved_micro_usd), 'spent', sum(spent_micro_usd)) "
++                           "from commerce.wa_model_budget;"),
++                         {'reserved': 0, 'spent': sum(reservations.values())})
++
+ 
+ if __name__ == '__main__':
+     unittest.main(argv=['x'] + REST, verbosity=2)

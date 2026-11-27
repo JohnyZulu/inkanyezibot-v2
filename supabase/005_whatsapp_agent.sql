@@ -547,10 +547,21 @@ begin
   if v_conv.current_turn_id is not null then
     update wa_turns set status = 'abandoned', finished_at = clock_timestamp(), outcome = 'lease_expired'
      where id = v_conv.current_turn_id and status = 'running';
-    update wa_model_budget b set reserved_micro_usd = b.reserved_micro_usd - r.amount_micro_usd,
-                                 spent_micro_usd = b.spent_micro_usd + r.amount_micro_usd
-      from wa_model_reservations r
-     where r.turn_id = v_conv.current_turn_id and r.status = 'reserved' and b.store_id = r.store_id and b.day = r.day;
+
+    -- Late settlement locks the reservation before the budget. Lock every remaining
+    -- reservation before touching any budget row, including when a turn crosses midnight.
+    perform 1 from wa_model_reservations r
+     where r.turn_id = v_conv.current_turn_id and r.status = 'reserved'
+     order by r.id for update;
+    update wa_model_budget b set reserved_micro_usd = b.reserved_micro_usd - pending.total_micro_usd,
+                                 spent_micro_usd = b.spent_micro_usd + pending.total_micro_usd
+      from (
+        select store_id, day, sum(amount_micro_usd)::bigint as total_micro_usd
+          from wa_model_reservations
+         where turn_id = v_conv.current_turn_id and status = 'reserved'
+         group by store_id, day
+      ) pending
+     where b.store_id = pending.store_id and b.day = pending.day;
     update wa_model_reservations set status = 'settled', actual_micro_usd = amount_micro_usd
      where turn_id = v_conv.current_turn_id and status = 'reserved';
   end if;
@@ -612,7 +623,7 @@ language plpgsql security definer set search_path = commerce, pg_temp as $$
 declare
   v_err text; v_turn wa_turns; v_conv wa_conversations; v_ident wa_identities; r jsonb; v_n int := 0;
   v_ids bigint[] := '{}'; v_id bigint; v_int wa_checkout_intents; v_payload jsonb; v_dropped int := 0;
-  v_order orders; v_left int;
+  v_order orders; v_left int; v_staged jsonb[] := '{}';
 begin
   select * into v_turn from wa_turns where id = p_turn_id;
   if found and v_turn.status = 'committed' and v_turn.lease_token = p_lease_token then
@@ -655,7 +666,13 @@ begin
     else
       return jsonb_build_object('ok',false,'code','invalid_purpose');
     end if;
-    v_id := wa_queue_out(v_conv.id, p_turn_id, r->>'purpose', 'turn:' || p_turn_id || ':' || v_n, v_payload);
+    v_staged := array_append(v_staged, jsonb_build_object(
+      'purpose', r->>'purpose', 'dedup_key', 'turn:' || p_turn_id || ':' || v_n, 'payload', v_payload));
+  end loop;
+
+  -- Validation errors return normally. Queue only after the whole batch has passed.
+  foreach r in array v_staged loop
+    v_id := wa_queue_out(v_conv.id, p_turn_id, r->>'purpose', r->>'dedup_key', r->'payload');
     if v_id is not null then v_ids := v_ids || v_id; end if;
   end loop;
 

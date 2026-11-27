@@ -398,6 +398,59 @@ class Races(unittest.TestCase):
         self.assertEqual(rb.get('code'), 'old_checkout_paid', rb)
         self.assertEqual(count(f"commerce.wa_outbox where dedup_key = 'paid:{c['order_id']}'"), 1)
 
+    def test_r9_late_settlement_overlaps_turn_recovery(self):
+        sql("delete from commerce.wa_model_reservations; delete from commerce.wa_model_budget;")
+        s = sender()
+        conv = j(f"select commerce.wa_t_msg('{s}', 'wamid.r9.{s}', 'hi');")['conversation_id']
+        t = j(f"select commerce.wa_t_turn('{conv}');")
+        tid, tok = t['turn_id'], t['lease_token']
+        reservations = {}
+        for amount in (200000, 300000, 400000):
+            r = j(f"select public.commerce_wa_reserve_model_spend('{tid}', '{tok}', {amount});")
+            self.assertTrue(r['ok'], r)
+            reservations[r['reservation_id']] = amount
+        sql(f"update commerce.wa_conversations set turn_lease_until = clock_timestamp() - interval '1 second' "
+            f"where id = '{conv}';")
+
+        # Hold the last reservation in recovery's lock order. Recovery may lock the others
+        # first, but must leave the budget row free so settlement can finish.
+        last_id = max(reservations)
+        settler, recovery = Session('r9_settle'), Session('r9_recover')
+        try:
+            settler.send('begin;'); settler.result()
+            settler.send(f"select id from commerce.wa_model_reservations where id = '{last_id}' for update;")
+            self.assertEqual(settler.result(), last_id)
+            recovery.send('begin;'); recovery.result()
+            recovery.send(f"select commerce.wa_t_turn('{conv}');")
+            self.assertTrue(wait_blocked('r9_recover'), 'recovery must wait for the locked reservation')
+
+            settler.send(f"select public.commerce_wa_settle_model_spend('{last_id}', 50000);")
+            result = settler.result()
+            self.assertTrue(result.startswith('{'), result)
+            settled = json.loads(result)
+            settler.send('commit;'); settler.result()
+            result = recovery.result()
+            self.assertTrue(result.startswith('{'), result)
+            reclaimed = json.loads(result)
+            recovery.send('commit;'); recovery.result()
+        finally:
+            settler.close(); recovery.close()
+
+        self.assertTrue(settled['ok'] and not settled['replayed'], settled)
+        self.assertTrue(reclaimed['claimed'] and reclaimed['turn_id'] != tid, reclaimed)
+        self.assertEqual(reclaimed['message_ids'], t['message_ids'])
+        self.assertEqual(sql(f"select status from commerce.wa_turns where id = '{tid}';"), 'abandoned')
+        recovered_id = min(reservations)
+        replay = j(f"select public.commerce_wa_settle_model_spend('{recovered_id}', 10000);")
+        self.assertTrue(replay['ok'] and replay['replayed'], replay)
+        reservations[last_id] = 50000
+        self.assertEqual(j(f"select jsonb_object_agg(id, actual_micro_usd) "
+                           f"from commerce.wa_model_reservations where turn_id = '{tid}' and status = 'settled';"),
+                         reservations)
+        self.assertEqual(j("select jsonb_build_object('reserved', sum(reserved_micro_usd), 'spent', sum(spent_micro_usd)) "
+                           "from commerce.wa_model_budget;"),
+                         {'reserved': 0, 'spent': sum(reservations.values())})
+
 
 if __name__ == '__main__':
     unittest.main(argv=['x'] + REST, verbosity=2)
